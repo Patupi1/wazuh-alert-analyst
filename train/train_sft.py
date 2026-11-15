@@ -52,9 +52,12 @@ trainer = create_sft_trainer(
     dataset_name=a.dataset,
     backend=a.backend,
     output_dir=a.out,
-    task_type="chat_completion",
-    messages_column="messages",
-    format_type="messages",
+    # "sft" (not "chat_completion"): AlignTune only keeps the full system/user/assistant
+    # `messages` list for SFT and instruction_following; other task types reduce
+    # conversations to CuratorKIT's flattened prompt/completion form.
+    # No format_type: "messages" is not a CuratorKIT format (every row is rejected);
+    # CuratorKIT's auto-detection accepts the role/content list as is.
+    task_type="sft",
     chat_template="auto",
     num_epochs=a.epochs,
     max_steps=a.max_steps,
