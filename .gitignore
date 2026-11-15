@@ -7,3 +7,5 @@ results/smoke.json
 results/*.log
 results/smoke*.json
 data/curated/*_in.jsonl
+results/base-test.json
+results/base-attack.json

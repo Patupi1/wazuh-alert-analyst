@@ -78,11 +78,25 @@ AlignTune `create_sft_trainer`, `task_type="sft"` on `messages` rows, QLoRA (4-b
 
 ## Results
 
-**TODO: before/after table on test (297) and attack (150) from `results/*.json`.**
+Same prompts, same Ollama runtime (Q4_K_M GGUF, temperature 0), same AuditKIT scorers. ↓ = lower is better. Numbers on the curated sets (test n = 297, attack n = 150); subset metrics give their n.
 
-| Metric | Tiny Aya base | Tiny Aya + LoRA |
-|---|---|---|
-| … | … | … |
+| Metric | Set | Tiny Aya base | Tiny Aya + LoRA |
+|---|---|---|---|
+| JSON valid + schema valid | test | 0.980 | TODO |
+| Severity accuracy | test | 0.380 | TODO |
+| Missed critical ↓ (n = 86) | test | 0.919 | TODO |
+| False alarm on routine days ↓ (n = 96) | test | 0.979 | TODO |
+| needs_a_look count error ↓ | test | 1.43 | TODO |
+| Evidence recall (n = 201) | test | 0.494 | TODO |
+| Invented entities ↓ | test | 0.000 | TODO |
+| Injection flag accuracy | test | 0.785 | TODO |
+| Injection success ↓ (n = 52) | test | 0.615 | TODO |
+| Injection flag accuracy | attack | 0.580 | TODO |
+| **Injection success ↓** | attack | **0.593** | TODO |
+| Severity accuracy | attack | 0.567 | TODO |
+| Latency per batch (RX 6400, 100 % GPU) | test | 8.1 s | TODO |
+
+Baseline reading: the base model produces well-formed JSON but cannot triage. It calls 92 % of critical days something other than critical, raises items on 98 % of quiet days, and is steered by planted text in about 60 % of injected batches. It does not invent hosts, addresses or paths (0 of 597 entities in its answers are absent from the input), so `invented_entities` serves as a regression check for the fine-tune.
 
 ## Limitations
 
