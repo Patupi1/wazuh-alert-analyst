@@ -31,6 +31,7 @@ if "--backend" not in sys.argv or sys.argv[sys.argv.index("--backend") + 1] == "
     for _m in ("unsloth", "unsloth_zoo"):
         sys.modules[_m] = None
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch  # noqa: E402
 from aligntune.core.backend_factory import create_sft_trainer  # noqa: E402
 
@@ -43,8 +44,11 @@ ap.add_argument("--backend", default="trl", help="chat_completion is only suppor
 ap.add_argument("--epochs", type=float, default=2)
 ap.add_argument("--max-steps", type=int, default=-1)
 ap.add_argument("--max-samples", type=int, default=None)
-ap.add_argument("--batch", type=int, default=2)
-ap.add_argument("--grad-accum", type=int, default=8)
+# Tiny Aya's ~262k vocabulary makes the logits the memory peak (batch 2 x ~1.2k tokens
+# needed a 3.8 GB allocation and ran out on a 15 GB T4), so batch 1 x accum 16
+# (same effective batch of 16).
+ap.add_argument("--batch", type=int, default=1)
+ap.add_argument("--grad-accum", type=int, default=16)
 ap.add_argument("--lr", type=float, default=2e-4)
 ap.add_argument("--seq", type=int, default=2048)
 ap.add_argument("--lora-r", type=int, default=16)
