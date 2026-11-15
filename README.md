@@ -74,7 +74,7 @@ Custom scorers are `@auditkit.scorer` functions in [`src/eval.py`](src/eval.py);
 
 ## Method and hyperparameters
 
-AlignTune `create_sft_trainer`, `task_type="sft"` on `messages` rows, QLoRA (4-bit NF4), LoRA r=16, α=32, dropout 0.05 on q/k/v/o/gate/up/down, lr 2e-4 cosine, warmup 5 %, batch 2 × grad-accum 8, max_seq_length 2048, 2 epochs, seed 42, backend `auto` (Unsloth → TRL). **TODO: GPU, wall time, final loss from `train_summary.json`.**
+AlignTune `create_sft_trainer`, `task_type="sft"` on `messages` rows, QLoRA (4-bit NF4), LoRA r=16, α=32, dropout 0.05 on q/k/v/o/gate/up/down, lr 2e-4 cosine, warmup 5 %, batch 2 × grad-accum 8, max_seq_length 2048, 2 epochs, seed 42, backend `trl` (AlignTune's Unsloth backend does not take chat data). **TODO: GPU, wall time, final loss from `train_summary.json`.**
 
 ## Results
 
