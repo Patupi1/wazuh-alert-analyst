@@ -41,7 +41,7 @@ ap.add_argument("--dataset", required=True, help="HF dataset repo (config train_
 ap.add_argument("--subset", default="train_messages")
 ap.add_argument("--out", default="./out")
 ap.add_argument("--backend", default="trl", help="chat_completion is only supported by the TRL backend (Unsloth: sft/pretraining/instruction_following)")
-ap.add_argument("--epochs", type=float, default=2)
+ap.add_argument("--epochs", type=float, default=1)
 ap.add_argument("--max-steps", type=int, default=-1)
 ap.add_argument("--max-samples", type=int, default=None)
 # Tiny Aya's ~262k vocabulary makes the logits the memory peak (batch 2 x ~1.2k tokens
@@ -104,6 +104,22 @@ trainer = create_sft_trainer(
     seed=a.seed,
     **kw,
 )
+# Load the model now (train() skips setup_model() when a model is already set) and keep the
+# trainable LoRA weights in fp32, the usual QLoRA practice: the fp16 GradScaler cannot unscale
+# bf16 gradients ("_amp_foreach_non_finite_check_and_unscale_cuda not implemented for BFloat16"),
+# and Tiny Aya's checkpoint dtype is bf16. Frozen weights stay as loaded.
+if getattr(trainer, "model", None) is None:
+    trainer.setup_model()
+from collections import Counter  # noqa: E402
+casted = 0
+for p in trainer.model.parameters():
+    if p.requires_grad and p.dtype != torch.float32:
+        p.data = p.data.float()
+        casted += 1
+print(f"[train_sft] upcast {casted} trainable tensors to fp32; trainable dtypes:",
+      dict(Counter(str(p.dtype) for p in trainer.model.parameters() if p.requires_grad)),
+      "| frozen dtypes:", dict(Counter(str(p.dtype) for p in trainer.model.parameters() if not p.requires_grad)))
+
 result = trainer.train()
 path = trainer.save_model()
 Path(a.out).mkdir(parents=True, exist_ok=True)
