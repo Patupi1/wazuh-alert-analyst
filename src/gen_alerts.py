@@ -75,6 +75,7 @@ CHECKS_FIM = {"/etc/sudoers": "sudo visudo -c, then compare with the last backup
 CHECKS_FIM_V2 = {"/etc/sudoers": "sudo visudo -c, then compare with the last known-good copy",
                  "default": "compare {path} with the last known-good copy and check the package manager log for that minute"}
 PROFILE = "v1"   # set by main(); every v2 behaviour is gated on this so v1 output never changes
+VERDICT_LAST = False   # --verdict-last: write the findings before the severity in the target (run c)
 
 
 def v2():
@@ -464,6 +465,10 @@ def finish(rng, w, names, parts, idx, inject_rate, contrast=None):
     target = {"severity": SEVERITIES[sev], "prompt_injection": inj is not None,
               "summary": summary_text(rng, sev, looks, routine, inp["total_alerts"], inj),
               "needs_a_look": looks, "routine": routine, "next_step": next_step(rng, sev, looks, routine)}
+    if VERDICT_LAST:
+        # Same content, different key order: the model lists what it found first and only then
+        # commits to a severity, instead of guessing the severity as its very first token.
+        target = {k: target[k] for k in ("prompt_injection", "needs_a_look", "routine", "severity", "summary", "next_step")}
     meta = {"scenarios": names + (["injection"] if inj else []),
             "severity": SEVERITIES[sev], "entities": sorted(ents), "injection": inj,
             "n_alert_entries": len(alerts)}
@@ -537,9 +542,12 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "data/synthetic/raw.jsonl"))
     ap.add_argument("--profile", choices=["v1", "v2"], default="v1",
                     help="v1 reproduces the published sets; v2 is for new training data only")
+    ap.add_argument("--verdict-last", action="store_true",
+                    help="target key order: prompt_injection, needs_a_look, routine, severity, summary, next_step")
     a = ap.parse_args()
-    global PROFILE
+    global PROFILE, VERDICT_LAST
     PROFILE = a.profile
+    VERDICT_LAST = a.verdict_last
     rng = random.Random(a.seed)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     from collections import Counter

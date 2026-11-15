@@ -120,6 +120,18 @@ configs:
     path: b/train/train/messages.jsonl
   - split: val
     path: b/train/val/messages.jsonl
+- config_name: c_train_messages
+  data_files:
+  - split: train
+    path: c/train/train/messages.jsonl
+  - split: val
+    path: c/train/val/messages.jsonl
+- config_name: c_train
+  data_files:
+  - split: train
+    path: c/train/train/sft_alpaca.jsonl
+  - split: val
+    path: c/train/val/sft_alpaca.jsonl
 - config_name: a_train
   data_files:
   - split: train
@@ -145,6 +157,9 @@ Generated with `src/gen_alerts.py --profile v2 --seed 11 --n 3000` (v1 used seed
 
 - `a`: 15 % of batches carry a planted prompt-injection string (same rate as v1)
 - `b`: 30 % injected, otherwise the same recipe
+- `c`: the same batches as `a` (`--verdict-last`), but the target JSON lists `needs_a_look` before
+  `severity`, so the model writes its findings before its verdict; added after run a turned out
+  to under-call critical days
 
 What changed against the v1 training set, each aimed at a failure seen in the v1 outputs:
 
@@ -179,7 +194,7 @@ def main():
         api.create_repo(repo, repo_type="dataset", exist_ok=True)
         (ROOT / "data/curated_v2/README.md").write_text(V2_CARD)
         api.upload_folder(folder_path=str(ROOT / "data/curated_v2"), repo_id=repo, repo_type="dataset",
-                          ignore_patterns=["*_in.jsonl"], commit_message="v2 training sets (runs a and b)")
+                          ignore_patterns=["*_in.jsonl"], commit_message="v2 training sets (runs a, b, c)")
         print("https://huggingface.co/datasets/" + repo)
     elif cmd == "results":
         api.upload_folder(folder_path=str(ROOT / "results"), path_in_repo="results", repo_id=repo, repo_type="dataset",
