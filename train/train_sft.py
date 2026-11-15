@@ -25,6 +25,11 @@ from pathlib import Path
 # PURE_TRL_MODE is AlignTune's own switch (aligntune/_imports.py). Must be set before import.
 if "--backend" not in sys.argv or sys.argv[sys.argv.index("--backend") + 1] == "trl":
     os.environ["PURE_TRL_MODE"] = "1"
+    # The env switch alone was not enough on Colab (some import path still loads Unsloth),
+    # so make every `import unsloth` / `import unsloth_zoo` raise ImportError, which
+    # AlignTune's optional-import guards treat as "Unsloth not installed".
+    for _m in ("unsloth", "unsloth_zoo"):
+        sys.modules[_m] = None
 
 import torch  # noqa: E402
 from aligntune.core.backend_factory import create_sft_trainer  # noqa: E402
