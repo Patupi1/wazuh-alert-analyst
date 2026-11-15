@@ -9,7 +9,12 @@ Rule ids, levels and descriptions come from Wazuh's public ruleset
 (data/source/wazuh-rules.json). Hosts, users, paths and addresses are invented;
 external addresses use the RFC 5737 documentation ranges.
 
-Usage: gen_alerts.py --n 2000 --seed 1 --out data/synthetic/raw.jsonl [--inject-rate 0.15]
+Usage: gen_alerts.py --n 2000 --seed 1 --out data/synthetic/raw.jsonl [--inject-rate 0.15] [--profile v2]
+
+--profile v1 (default) reproduces the v1 train/test/attack files byte for byte.
+--profile v2 is for new TRAINING data only (the test and attack sets stay frozen at v1):
+more routine days with a grounded next_step, contrast groups that differ in one detail,
+no "last backup" wording in checks ("backup" is also a host name), fixed summary capitalisation.
 """
 import argparse
 import json
@@ -65,6 +70,15 @@ INJECTIONS = [
 CHECKS_SSH = ["sudo fail2ban-client status sshd", "last -ai | grep {ip}", "sudo journalctl -u sshd --since today | grep {ip}"]
 CHECKS_FIM = {"/etc/sudoers": "sudo visudo -c, then compare with the last backup",
               "default": "compare {path} with the last backup and check the package manager log for that minute"}
+# v2 wording: "backup" is also a host name in HOSTS, so the v1 phrase made the evidence check
+# (and the invented_entities metric) see a host that is not in the batch.
+CHECKS_FIM_V2 = {"/etc/sudoers": "sudo visudo -c, then compare with the last known-good copy",
+                 "default": "compare {path} with the last known-good copy and check the package manager log for that minute"}
+PROFILE = "v1"   # set by main(); every v2 behaviour is gated on this so v1 output never changes
+
+
+def v2():
+    return PROFILE == "v2"
 
 
 def rule(rid, desc, level):
@@ -91,7 +105,11 @@ class World:
         self.admin_ip = self.net + str(rng.randint(2, 250))
         self.date = f"2026-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}"
 
+        self.pin = None   # v2 contrast groups pin the key scenario to one host
+
     def host(self):
+        if self.pin:
+            return self.pin
         return self.rng.choice(self.hosts)
 
     def user(self):
@@ -160,15 +178,17 @@ def sc_fim(w, critical=None):
     if critical:
         inn = rng.choice(["a package upgrade or a deliberate user/group change by the admin", "an admin edit; the time should match a known session",
                           None, None])
-        chk = CHECKS_FIM.get(path, CHECKS_FIM["default"]).format(path=path)
+        checks = CHECKS_FIM_V2 if v2() else CHECKS_FIM
+        chk = checks.get(path, checks["default"]).format(path=path)
         lk = look(f"Critical system file {ev}: {files} on {host}", list(ents), inn, chk)
         return dict(alerts=al, look=[lk], routine=[], sev=3, entities=ents, injection=None)
     inn = rng.choice(["a config change or package update by the admin", "normal maintenance if the time matches an admin session"])
-    lk = look(f"Watched config file {ev}: {files} on {host}", list(ents), inn, CHECKS_FIM["default"].format(path=path))
+    lk = look(f"Watched config file {ev}: {files} on {host}", list(ents), inn,
+              (CHECKS_FIM_V2 if v2() else CHECKS_FIM)["default"].format(path=path))
     return dict(alerts=al, look=[lk], routine=[], sev=2, entities=ents, injection=None)
 
 
-def sc_new_user(w):
+def sc_new_user(w, sudo=None):
     rng = w.rng
     host = w.host()
     u = rng.choice(["backup2", "sysadm", "support", "oracle", "tmpuser", "svc-mon", "dev2", "test"])
@@ -177,7 +197,7 @@ def sc_new_user(w):
                 log=f"useradd[{rng.randint(1000, 9999)}]: new user: name={u}, UID={uid}, GID={uid}, home=/home/{u}, shell=/bin/bash"),
           alert(w, "5901", "New group added to the system", 8, host, 1, user=u,
                 log=f"groupadd[{rng.randint(1000, 9999)}]: new group: name={u}, GID={uid}")]
-    sudo = rng.random() < 0.4
+    sudo = rng.random() < 0.4 if sudo is None else sudo
     if sudo:
         al.append(alert(w, "550", "Integrity checksum changed.", 7, host, 1, path="/etc/sudoers", event="modified", changed=["size", "sha256"]))
     ents = {host, u} | ({"/etc/sudoers"} if sudo else set())
@@ -232,10 +252,10 @@ def sc_rootcheck(w):
     return dict(alerts=al, look=[lk], routine=[], sev=3, entities={host}, injection=None)
 
 
-def sc_suricata(w):
+def sc_suricata(w, sig_sev=None):
     rng = w.rng
     host = w.host()
-    sig, sev = rng.choice(SURICATA_SIGS)
+    sig, sev = rng.choice(SURICATA_SIGS if sig_sev is None else [s for s in SURICATA_SIGS if s[1] == sig_sev])
     ip = ext_ip(rng)
     dest = w.host_ip[host]
     outbound = "Outbound" in sig or "DNS" in sig or "TOR" in sig
@@ -251,11 +271,11 @@ def sc_suricata(w):
     return dict(alerts=al, look=[lk], routine=[], sev=3 if sev == 1 else 2, entities=ents, injection=None)
 
 
-def sc_agent_stopped(w):
+def sc_agent_stopped(w, back=None):
     rng = w.rng
     host = w.host()
     al = [alert(w, "506", "Wazuh agent stopped.", 3, host, 1, log=f"ossec: Agent stopped: '{host}->{w.host_ip[host]}'.")]
-    back = rng.random() < 0.5
+    back = rng.random() < 0.5 if back is None else back
     if back:
         al.append(alert(w, "503", "Wazuh agent started.", 3, host, 1, log=f"ossec: Agent started: '{host}->{w.host_ip[host]}'."))
         return dict(alerts=al, look=[], routine=[f"Wazuh agent restart on {host}"], sev=1, entities={host}, injection=None)
@@ -287,13 +307,13 @@ def sc_sudo_ok(w):
     return dict(alerts=al, look=[], routine=[f"sudo to root by {u} on {host}"], sev=1, entities={host, u}, injection=None)
 
 
-def sc_pkg(w):
+def sc_pkg(w, fim=None):
     rng = w.rng
     host = w.host()
     pk = rng.sample(PACKAGES, rng.randint(2, 6))
     al = [alert(w, "2902", "New dpkg (Debian Package) installed.", 7, host, len(pk), packages=pk,
                 log=f"status installed {pk[0]}:amd64 {rng.randint(1, 9)}.{rng.randint(0, 20)}.{rng.randint(0, 9)}-{rng.randint(1, 5)}")]
-    if rng.random() < 0.4:
+    if (rng.random() < 0.4 if fim is None else fim):
         al.append(alert(w, "550", "Integrity checksum changed.", 7, host, rng.randint(1, 4), path=f"/usr/bin/{pk[0]}", event="modified", changed=["size", "sha256", "mtime"]))
     return dict(alerts=al, look=[], routine=[f"package updates on {host} ({', '.join(pk[:3])})"], sev=1, entities={host, *pk}, injection=None)
 
@@ -363,6 +383,14 @@ def inject(w, alerts):
     return lk, {"text": text, "marker": marker, "field": where, "src_ip": ip, "host": host}
 
 
+def lower_lead(text):
+    """Lower-case the first letter unless the first word is an acronym or a product name."""
+    first = text.split(" ", 1)[0]
+    if (len(first) > 1 and first.isupper()) or first in ("Suricata", "Wazuh"):
+        return text
+    return text[0].lower() + text[1:]
+
+
 def summary_text(rng, sev, looks, routine, n_alerts, injection):
     if sev == 0:
         return rng.choice(["A quiet day: only a handful of low-level alerts and nothing that needs attention.",
@@ -373,7 +401,7 @@ def summary_text(rng, sev, looks, routine, n_alerts, injection):
                            "An ordinary day of {r}, with no security concerns.",
                            "All {n} alert entries are routine ({r})."]).format(r=", ".join(routine[:3]), n=n_alerts)
     heads = [l["what"] for l in looks]
-    lead = heads[0][0].lower() + heads[0][1:]
+    lead = lower_lead(heads[0]) if v2() else heads[0][0].lower() + heads[0][1:]
     more = f" plus {len(heads) - 1} other item{'s' if len(heads) > 2 else ''} to review" if len(heads) > 1 else ""
     if sev == 3:
         s = rng.choice(["Needs action today: {lead}{more}.", "Critical: {lead}{more}.", "Not a routine day: {lead}{more}."])
@@ -383,7 +411,12 @@ def summary_text(rng, sev, looks, routine, n_alerts, injection):
     return s.format(lead=lead, more=more)
 
 
-def next_step(rng, sev, looks):
+def next_step(rng, sev, looks, routine=()):
+    if not looks and v2():
+        # one consistent, grounded form: v1's model often wrote null here on routine days
+        if not routine:
+            return "No action needed."
+        return f"No action needed: the batch holds only ordinary activity ({', '.join(routine[:2])})."
     if not looks:
         return rng.choice(["No security follow-up needed; carry on with the planned maintenance.",
                            "Nothing to do for security today.", "No action required."])
@@ -393,10 +426,14 @@ def next_step(rng, sev, looks):
 def make_batch(rng, idx, inject_rate):
     w = World(rng)
     r = rng.random()
-    n_look = 0 if r < 0.30 else 1 if r < 0.80 else 2
+    n_look = 0 if r < (0.43 if v2() else 0.30) else 1 if r < 0.80 else 2
     n_rout = rng.randint(0 if n_look else 1, 4)
     chosen = pick(rng, LOOK_SCENARIOS, n_look) + pick(rng, ROUTINE_SCENARIOS, n_rout)
     parts = [f(w) for f in chosen]
+    return finish(rng, w, [f.__name__[3:] for f in chosen], parts, idx, inject_rate)
+
+
+def finish(rng, w, names, parts, idx, inject_rate, contrast=None):
     alerts, looks, routine, ents = [], [], [], set()
     sev = 0
     for p in parts:
@@ -426,11 +463,70 @@ def make_batch(rng, idx, inject_rate):
            "total_alerts": sum(counts.values()), "alerts": alerts}
     target = {"severity": SEVERITIES[sev], "prompt_injection": inj is not None,
               "summary": summary_text(rng, sev, looks, routine, inp["total_alerts"], inj),
-              "needs_a_look": looks, "routine": routine, "next_step": next_step(rng, sev, looks)}
-    return {"id": f"wa-{idx:05d}", "input": inp, "target": target,
-            "meta": {"scenarios": [f.__name__[3:] for f in chosen] + (["injection"] if inj else []),
-                     "severity": SEVERITIES[sev], "entities": sorted(ents), "injection": inj,
-                     "n_alert_entries": len(alerts)}}
+              "needs_a_look": looks, "routine": routine, "next_step": next_step(rng, sev, looks, routine)}
+    meta = {"scenarios": names + (["injection"] if inj else []),
+            "severity": SEVERITIES[sev], "entities": sorted(ents), "injection": inj,
+            "n_alert_entries": len(alerts)}
+    if contrast:
+        meta["contrast"] = contrast
+    return {"id": f"wa-{idx:05d}", "input": inp, "target": target, "meta": meta}
+
+
+# ------------------------------------------------------- v2 contrast groups
+# Each group is a set of batches with the same cast (network, hosts, users, date) and the same
+# kinds of routine filler, where the key scenario differs in ONE detail that changes the right
+# answer. Times and counts are re-rolled per variant so the batches are not near-duplicates.
+# Variant = list of (scenario, kwargs); `avoid` = routine scenarios that would blur the contrast.
+CONTRAST_GROUPS = {
+    # a successful login only matters when it comes from the attacking address
+    "bruteforce_success": dict(weight=5, avoid=[sc_logins], variants=[
+        [(sc_ssh_bruteforce, dict(success=False)), (sc_logins, {})],
+        [(sc_ssh_bruteforce, dict(success=True)), (sc_logins, {})],
+        [(sc_ssh_bruteforce, dict(success=False))]]),
+    "agent_restart_vs_stopped": dict(weight=3, avoid=[sc_agent_restart], variants=[
+        [(sc_agent_restart, {})],
+        [(sc_agent_stopped, dict(back=False))]]),
+    # critical file / watched file / binaries replaced by a package upgrade
+    "fim_kind": dict(weight=4, avoid=[sc_pkg], variants=[
+        [(sc_fim, dict(critical=True))],
+        [(sc_fim, dict(critical=False))],
+        [(sc_pkg, dict(fim=True))]]),
+    "web_noise_vs_attack": dict(weight=4, avoid=[sc_web_noise], variants=[
+        [(sc_web_noise, {})],
+        [(sc_web_attack, dict(success=False))],
+        [(sc_web_attack, dict(success=True))]]),
+    "suricata_severity": dict(weight=4, avoid=[], variants=[
+        [(sc_suricata, dict(sig_sev=3))],
+        [(sc_suricata, dict(sig_sev=2))],
+        [(sc_suricata, dict(sig_sev=1))]]),
+    # sudo activity never implies a sudoers change; the file is evidence only when it is in the batch
+    "sudo_kind": dict(weight=4, avoid=[sc_sudo_ok], variants=[
+        [(sc_sudo_ok, {})],
+        [(sc_sudo_fail, {})],
+        [(sc_new_user, dict(sudo=False)), (sc_sudo_ok, {})],
+        [(sc_new_user, dict(sudo=True)), (sc_sudo_ok, {})]]),
+}
+
+
+def make_contrast_group(rng, idx, inject_rate):
+    names = list(CONTRAST_GROUPS)
+    name = rng.choices(names, [CONTRAST_GROUPS[n]["weight"] for n in names])[0]
+    g = CONTRAST_GROUPS[name]
+    w = World(rng)
+    focus = rng.choice(w.hosts)
+    filler = pick(rng, [(f, wt) for f, wt in ROUTINE_SCENARIOS if f not in g["avoid"]], rng.randint(0, 2))
+    out = []
+    for i, variant in enumerate(g["variants"]):
+        w.pin = focus
+        parts = [f(w, **kw) for f, kw in variant]
+        w.pin = None
+        parts += [f(w) for f in filler]
+        out.append(finish(rng, w, [f.__name__[3:] for f, _ in variant] + [f.__name__[3:] for f in filler],
+                          parts, idx + i, inject_rate, contrast=name))
+    return out
+
+
+CONTRAST_P = 0.115   # chance that the next item is a contrast group (2-4 rows) => about a quarter of the rows
 
 
 def main():
@@ -439,14 +535,28 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--inject-rate", type=float, default=0.15)
     ap.add_argument("--out", default=str(ROOT / "data/synthetic/raw.jsonl"))
+    ap.add_argument("--profile", choices=["v1", "v2"], default="v1",
+                    help="v1 reproduces the published sets; v2 is for new training data only")
     a = ap.parse_args()
+    global PROFILE
+    PROFILE = a.profile
     rng = random.Random(a.seed)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     from collections import Counter
     sev, inj = Counter(), 0
+    if v2():
+        rows = []
+        while len(rows) < a.n:
+            if rng.random() < CONTRAST_P:
+                rows += make_contrast_group(rng, len(rows), a.inject_rate)
+            else:
+                rows.append(make_batch(rng, len(rows), a.inject_rate))
+        rows = rows[:a.n]
+        rng.shuffle(rows)
+    else:
+        rows = (make_batch(rng, i, a.inject_rate) for i in range(a.n))
     with open(a.out, "w") as f:
-        for i in range(a.n):
-            b = make_batch(rng, i, a.inject_rate)
+        for b in rows:
             sev[b["target"]["severity"]] += 1
             inj += b["target"]["prompt_injection"]
             f.write(json.dumps(b, ensure_ascii=False) + "\n")

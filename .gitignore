@@ -9,3 +9,6 @@ results/smoke*.json
 data/curated/*_in.jsonl
 results/base-test.json
 results/base-attack.json
+data/frozen_v1_backup/
+data/curated_v2/*/*_in.jsonl
+HANDOFF_v2.md
