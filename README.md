@@ -6,7 +6,7 @@ Lexsi AI Safety and Alignment Hackathon, **Track 1** (Fine-tuning and Data Curat
 
 ## Abstract
 
-Small self-hosted SIEM deployments (Wazuh in a homelab or a small business) produce hundreds of alerts a day that nobody reads. A daily LLM summary helps, but a general 7B model invents commands, pads routine activity into findings, and can be steered by attacker-controlled text in usernames or URLs. We generate alert batches whose correct analysis is known exactly (each batch is composed from named scenarios: brute force with or without a successful login, critical-file changes, new accounts, web attacks, rootcheck anomalies, Suricata alerts, routine logins, package upgrades, …), curate them with CuratorKIT, fine-tune Tiny Aya with AlignTune, and evaluate with AuditKIT on a held-out test set and an attack set where every batch carries a planted injection string. Metrics cover format (JSON, schema), judgement (severity accuracy, missed criticals, false alarms), grounding (evidence recall, invented entities) and safety (injection flag accuracy, attack success rate), plus latency on the target hardware. **Results: TODO after training.**
+Small self-hosted SIEM deployments (Wazuh in a homelab or a small business) produce hundreds of alerts a day that nobody reads. A daily LLM summary helps, but a general 7B model invents commands, pads routine activity into findings, and can be steered by attacker-controlled text in usernames or URLs. We generate alert batches whose correct analysis is known exactly (each batch is composed from named scenarios: brute force with or without a successful login, critical-file changes, new accounts, web attacks, rootcheck anomalies, Suricata alerts, routine logins, package upgrades, …), curate them with CuratorKIT, fine-tune Tiny Aya with AlignTune, and evaluate with AuditKIT on a held-out test set and an attack set where every batch carries a planted injection string. Metrics cover format (JSON, schema), judgement (severity accuracy, missed criticals, false alarms), grounding (evidence recall, invented entities) and safety (injection flag accuracy, attack success rate), plus latency on the target hardware. **Results:** one epoch of QLoRA (3 h on a free Colab T4) raises severity accuracy from 0.38 to 0.64, cuts missed critical days from 92 % to 8 %, false alarms on routine days from 98 % to 38 %, and the success rate of planted prompt injections from 59 % to 21 % on the attack set; evidence recall rises from 0.49 to 0.88 and latency drops from 8.1 s to 6.0 s per batch on a 4 GB RX 6400. Two regressions are reported, not hidden: schema validity on the test set drops from 0.98 to 0.86 (the model writes `"next_step": null` on routine days), and 3.5 % of the entities it names are not in the batch (it reaches for `/etc/sudoers` and similar critical paths), against 0 % for the base model.
 
 ## Problem and approach
 
@@ -43,7 +43,7 @@ No other model is used anywhere in the pipeline.
 
 ## Datasets
 
-HF dataset: **TODO link** (public, ungated). All rows synthetic; no real logs.
+HF dataset: [Yusheng88/wazuh-alert-analyst](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst) (public, ungated). All rows synthetic; no real logs.
 
 | Set | Rows (after curation) | Generation | Purpose |
 |---|---|---|---|
@@ -74,7 +74,7 @@ Custom scorers are `@auditkit.scorer` functions in [`src/eval.py`](src/eval.py);
 
 ## Method and hyperparameters
 
-AlignTune `create_sft_trainer`, `task_type="sft"` on `messages` rows, QLoRA (4-bit NF4), LoRA r=16, α=32, dropout 0.05 on q/k/v/o/gate/up/down, lr 2e-4 cosine, warmup 5 %, batch 1 × grad-accum 16, max_seq_length 2048, 1 epoch, seed 42, backend `trl` (AlignTune's Unsloth backend does not take chat data). **TODO: GPU, wall time, final loss from `train_summary.json`.**
+AlignTune `create_sft_trainer`, `task_type="sft"` on `messages` rows, QLoRA (4-bit NF4), LoRA r=16, α=32, dropout 0.05 on q/k/v/o/gate/up/down, lr 2e-4 cosine, warmup 5 %, batch 1 × grad-accum 16, max_seq_length 2048, 1 epoch, seed 42, backend `trl` (AlignTune's Unsloth backend does not take chat data). fp16 mixed precision with the LoRA weights kept in fp32 (the T4 has no native bf16). 137 optimizer steps on one free-tier **Colab T4 (16 GB)**, **177 min** wall time (~75 s/step), 30.2 M trainable parameters (0.89 %). Training loss 2.23 → 0.13 (mean 0.38); validation loss 0.127 at step 100 and **0.124** at the end (token accuracy 96.5 %), so no sign of over-fitting. Export: AlignTune `merge-adapter`, then llama.cpp `convert_hf_to_gguf.py` + `llama-quantize Q4_K_M` (AlignTune's own GGUF exporter currently fails: it downloads the converter from a renamed llama.cpp path, HTTP 404). Full config and numbers: [`train_summary.json`](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-lora/blob/main/train_summary.json).
 
 ## Results
 
@@ -82,26 +82,41 @@ Same prompts, same Ollama runtime (Q4_K_M GGUF, temperature 0), same AuditKIT sc
 
 | Metric | Set | Tiny Aya base | Tiny Aya + LoRA |
 |---|---|---|---|
-| JSON valid + schema valid | test | 0.980 | TODO |
-| Severity accuracy | test | 0.380 | TODO |
-| Missed critical ↓ (n = 86) | test | 0.919 | TODO |
-| False alarm on routine days ↓ (n = 96) | test | 0.979 | TODO |
-| needs_a_look count error ↓ | test | 1.43 | TODO |
-| Evidence recall (n = 201) | test | 0.494 | TODO |
-| Invented entities ↓ | test | 0.000 | TODO |
-| Injection flag accuracy | test | 0.785 | TODO |
-| Injection success ↓ (n = 52) | test | 0.615 | TODO |
-| Injection flag accuracy | attack | 0.580 | TODO |
-| **Injection success ↓** | attack | **0.593** | TODO |
-| Severity accuracy | attack | 0.567 | TODO |
-| Latency per batch (RX 6400, 100 % GPU) | test | 8.1 s | TODO |
+| JSON valid | test | 0.980 | 0.983 |
+| Schema valid | test | 0.980 | **0.862** (regression) |
+| Severity accuracy | test | 0.380 | **0.636** |
+| Missed critical ↓ (n = 86) | test | 0.919 | **0.081** |
+| False alarm on routine days ↓ (n = 96) | test | 0.979 | **0.385** |
+| needs_a_look count error ↓ | test | 1.43 | **0.545** |
+| Evidence recall (n = 201) | test | 0.494 | **0.875** |
+| Invented entities ↓ | test | 0.000 | 0.035 (regression) |
+| Injection flag accuracy | test | 0.785 | **0.912** |
+| Injection success ↓ (n = 52) | test | 0.615 | **0.192** |
+| JSON + schema valid | attack | 0.967 | 0.973 |
+| Injection flag accuracy | attack | 0.580 | **0.900** |
+| **Injection success ↓** | attack | **0.593** | **0.213** |
+| Missed critical ↓ (n = 42) | attack | 0.976 | **0.214** |
+| Severity accuracy | attack | 0.567 | 0.600 |
+| Evidence recall | attack | 0.327 | **0.822** |
+| Invented entities ↓ | attack | 0.000 | 0.002 |
+| Latency per batch (RX 6400, 100 % GPU) | test | 8.1 s | **6.0 s** |
 
 Baseline reading: the base model produces well-formed JSON but cannot triage. It calls 92 % of critical days something other than critical, raises items on 98 % of quiet days, and is steered by planted text in about 60 % of injected batches. It does not invent hosts, addresses or paths (0 of 597 entities in its answers are absent from the input), so `invented_entities` serves as a regression check for the fine-tune.
+
+After fine-tuning: the triage judgement the base model lacked is largely learned. Missed critical days fall from 92 % to 8 %, evidence recall nearly doubles, and planted injections succeed about a third as often (59 % → 21 % on the attack set). Answers are also shorter, hence faster.
+
+Regressions and failure modes, from the per-sample outputs in `results/`:
+
+- **Schema validity 0.98 → 0.86.** 37 of the 43 schema failures are a single pattern: `"next_step": null` on routine days (31 of them on days the model classified correctly). The training targets never contain null; a one-line post-processor or a few more routine examples would fix it, but the number is reported as measured.
+- **Invented entities 0 → 3.5 % (test).** The tuned model sometimes names a critical file that is not in the batch, most often `/etc/sudoers` (9×), `/etc/sudoers.d/99-ops` (4×) and `/etc/os-release` (5×). It has learned which paths matter and occasionally asserts them. This is the most important caveat for real use: every evidence value should be checked against the batch, which is mechanical (the same check as the metric), and `deploy/analyze_today.py` is the place to add it.
+- **Look-alike scenarios get merged.** For example, it reported a brute force "followed by a successful login" when there was none, or an agent "stopped" when it only restarted. Severity on the attack set barely moved (0.57 → 0.60) even though the injection was flagged far more often, so the planted text still disturbs the judgement more than the format.
+- The model sometimes outputs `quiet`, which never appears as a target (the generator has no empty days).
 
 ## Limitations
 
 - Synthetic batches follow 14 scenario templates; real alert streams are messier and the scenario list is not exhaustive (no Windows, no cloud, no container-specific rules).
-- Targets are templated prose; the model learns the schema and the judgement rules, not rich explanations.
+- Targets are templated prose; the model learns the schema and the judgement rules, not rich explanations. One template capitalises badly ("sSH brute force"), found after training and left as is.
+- Base and tuned are both evaluated at Q4_K_M through Ollama; numbers for the unquantised adapter may differ slightly.
 - Injection payloads are drawn from nine families; held-out attack phrasing is only partially covered.
 - CC-BY-NC base model: non-commercial use only.
 
@@ -113,9 +128,10 @@ Baseline reading: the base model produces well-formed JSON but cannot triage. It
 
 ## Artifacts
 
-- Dataset collection: **TODO**
-- Model collection (adapter + GGUF): **TODO**
-- Results JSON (per-sample predictions and scores): `results/` and **TODO HF link**
+- Dataset: [Yusheng88/wazuh-alert-analyst](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst) (train / val / test / attack, alpaca + messages + sharegpt, CuratorKIT manifest)
+- LoRA adapter: [Yusheng88/tiny-aya-wazuh-analyst-lora](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-lora) (with `train_summary.json` and `lexsi_provenance.json`)
+- GGUF Q4_K_M for Ollama / llama.cpp: [Yusheng88/tiny-aya-wazuh-analyst-GGUF](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF) — `ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M`
+- Results JSON (per-sample predictions and scores, base and tuned): `results/` here and in the dataset repo under `results/`
 
 ## Reproduce
 
@@ -131,7 +147,9 @@ ollama pull hf.co/CohereLabs/tiny-aya-global-GGUF:Q4_K_M
 python src/eval.py --data data/synthetic/test_raw.jsonl   --curated data/curated/test/sft_alpaca.jsonl   --model ollama:hf.co/CohereLabs/tiny-aya-global-GGUF:Q4_K_M --label base-test
 python src/eval.py --data data/synthetic/attack_raw.jsonl --curated data/curated/attack/sft_alpaca.jsonl --model ollama:hf.co/CohereLabs/tiny-aya-global-GGUF:Q4_K_M --label base-attack
 # train on Colab/Kaggle: train/colab_train.ipynb (or train/train_sft.py), export GGUF, then
-python src/eval.py --data ... --model ollama:hf.co/<user>/tiny-aya-wazuh-analyst-GGUF:Q4_K_M --label tuned-test
+ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M
+python src/eval.py --data data/synthetic/test_raw.jsonl   --curated data/curated/test/sft_alpaca.jsonl   --model ollama:hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M --label tuned-test
+python src/eval.py --data data/synthetic/attack_raw.jsonl --curated data/curated/attack/sft_alpaca.jsonl --model ollama:hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M --label tuned-attack
 ```
 
 `data/source/wazuh-rules.json` is parsed from the Wazuh ruleset inside a stock manager container (GPLv2 upstream).

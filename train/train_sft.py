@@ -8,9 +8,9 @@ token with access to CohereLabs/tiny-aya-global (accept the licence on the model
   python train/train_sft.py --dataset data/curated/train/train/messages.jsonl --out out   (local file)
 
 Afterwards (AlignTune CLI):
-  aligntune export merge_adapter <out> --output <out>/merged
-  aligntune export gguf <out>/merged --output <out>/gguf -q Q4_K_M -c llama-cpp
-  aligntune export hf_hub <out> --repo <hf-user>/tiny-aya-wazuh-analyst-lora --adapter-only
+  aligntune export merge-adapter <out> --output <out>/merged
+  (merged model lands in <out>/merged/merged; GGUF: llama.cpp convert_hf_to_gguf.py + llama-quantize Q4_K_M, see the notebook)
+  aligntune export hf-hub <out> --repo <hf-user>/tiny-aya-wazuh-analyst-lora --adapter-only
 """
 import argparse
 import json
