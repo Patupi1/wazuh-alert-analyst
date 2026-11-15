@@ -108,17 +108,29 @@ trainer = create_sft_trainer(
 # trainable LoRA weights in fp32, the usual QLoRA practice: the fp16 GradScaler cannot unscale
 # bf16 gradients ("_amp_foreach_non_finite_check_and_unscale_cuda not implemented for BFloat16"),
 # and Tiny Aya's checkpoint dtype is bf16. Frozen weights stay as loaded.
-if getattr(trainer, "model", None) is None:
-    trainer.setup_model()
+# The cast runs right after TRL's SFTTrainer is constructed (AlignTune builds it inside
+# train()), so it also covers adapters that TRL/PEFT create or re-wrap there; the optimizer
+# is only created later in Trainer.train(), so it sees the fp32 parameters.
 from collections import Counter  # noqa: E402
-casted = 0
-for p in trainer.model.parameters():
-    if p.requires_grad and p.dtype != torch.float32:
-        p.data = p.data.float()
-        casted += 1
-print(f"[train_sft] upcast {casted} trainable tensors to fp32; trainable dtypes:",
-      dict(Counter(str(p.dtype) for p in trainer.model.parameters() if p.requires_grad)),
-      "| frozen dtypes:", dict(Counter(str(p.dtype) for p in trainer.model.parameters() if not p.requires_grad)))
+import trl  # noqa: E402
+
+def _upcast_trainable(model, where):
+    casted = 0
+    for p in model.parameters():
+        if p.requires_grad and p.dtype != torch.float32:
+            p.data = p.data.float()
+            casted += 1
+    print(f"[train_sft] {where}: upcast {casted} trainable tensors to fp32; trainable dtypes:",
+          dict(Counter(str(p.dtype) for p in model.parameters() if p.requires_grad)),
+          "| frozen dtypes:", dict(Counter(str(p.dtype) for p in model.parameters() if not p.requires_grad)), flush=True)
+
+_orig_sft_init = trl.SFTTrainer.__init__
+
+def _sft_init_fp32_lora(self, *args, **kwargs):
+    _orig_sft_init(self, *args, **kwargs)
+    _upcast_trainable(self.model, "after SFTTrainer init")
+
+trl.SFTTrainer.__init__ = _sft_init_fp32_lora
 
 result = trainer.train()
 path = trainer.save_model()
