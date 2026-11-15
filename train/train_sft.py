@@ -56,7 +56,10 @@ ap.add_argument("--no-4bit", action="store_true")
 ap.add_argument("--seed", type=int, default=42)
 a = ap.parse_args()
 
-bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+# Native bf16 needs compute capability >= 8 (Ampere+). torch.cuda.is_bf16_supported() also
+# returns True on a T4 (sm_75) through emulation, which made training ~10x slower
+# (261 s/step); so decide from the capability and pass the precision to AlignTune explicitly.
+bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
 local = a.dataset.endswith(".jsonl")
 kw = {}
 if not local:
@@ -91,6 +94,7 @@ trainer = create_sft_trainer(
     lora_alpha=2 * a.lora_r,
     lora_dropout=0.05,
     lora_target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    precision="bf16" if bf16 else "fp16",
     bf16=bf16,
     fp16=not bf16,
     gradient_checkpointing=True,
