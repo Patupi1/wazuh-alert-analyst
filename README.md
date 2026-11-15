@@ -2,7 +2,7 @@
 
 **Claim:** a LoRA fine-tune of Cohere's 3.35B Tiny Aya turns a day of Wazuh security alerts into a grounded, structured triage (severity, what needs a look with evidence copied from the batch, the harmless explanation, one check to run), runs fully on a 4 GB consumer GPU in a homelab, and resists prompt-injection text planted in log fields — measured before and after on held-out and adversarial sets.
 
-Lexsi AI Safety and Alignment Hackathon, **Track 1** (Fine-tuning and Data Curation), problem statements **#2** (replace a closed-model/larger-model API with a small fine-tuned model), **#3** (grounded answers, fewer hallucinations) and **#5** (structured output and extraction). Repos used: **CuratorKIT** (curation), **AlignTune** (training), **AuditKIT** (evaluation).
+Lexsi AI Safety and Alignment Hackathon, **Track 1** (Fine-tuning and Data Curation), problem statements **Structured output and extraction** and **Data-scarce domains** (real alert logs are private and unlabelled, so the data is generated with exact ground truth); grounding is measured too (evidence recall, invented entities). Repos used: **CuratorKIT** (curation), **AlignTune** (training), **AuditKIT** (evaluation).
 
 ## Abstract
 
