@@ -128,6 +128,7 @@ Regressions and failure modes, from the per-sample outputs in `results/`:
 
 ## Artifacts
 
+- Collection (everything below): https://huggingface.co/collections/Yusheng88/tiny-aya-wazuh-alert-analyst-6af99f90ced10d8fb22adea2
 - Dataset: [Yusheng88/wazuh-alert-analyst](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst) (train / val / test / attack, alpaca + messages + sharegpt, CuratorKIT manifest)
 - LoRA adapter: [Yusheng88/tiny-aya-wazuh-analyst-lora](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-lora) (with `train_summary.json` and `lexsi_provenance.json`)
 - GGUF Q4_K_M for Ollama / llama.cpp: [Yusheng88/tiny-aya-wazuh-analyst-GGUF](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF) — `ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M`
