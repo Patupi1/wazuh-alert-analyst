@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+data/source/wazuh-ruleset-raw.xml
+results/smoke.json
+.env
+results/*.log
+results/smoke*.json
+data/curated/*_in.jsonl

@@ -1,0 +1,7 @@
+# data generation, curation and evaluation (CPU, any Python >= 3.11)
+curatorkit>=0.1.28
+detect-secrets
+auditkit>=1.1.12
+jsonschema
+huggingface_hub
+# training (GPU, Colab/Kaggle): pip install aligntune

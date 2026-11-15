@@ -1,0 +1,88 @@
+{
+  "pipeline_config_hash": "e3c51faab18e8a50",
+  "run_timestamp": "2026-11-15T06:03:29.188079Z",
+  "source_files": [],
+  "stage_counts": {
+    "JSONLReader": {
+      "output_count": 2400,
+      "rejected_count": 0
+    },
+    "SchemaGate": {
+      "input_count": 2400,
+      "output_count": 2400,
+      "probe_recovered": 0,
+      "rejected_count": 0
+    },
+    "ExactDeduplicator": {
+      "input_count": 2400,
+      "output_count": 2396
+    },
+    "MinHashDeduplicator": {
+      "input_count": 2396,
+      "output_count": 2298
+    },
+    "TextCleaner": {
+      "input_count": 2298,
+      "output_count": 2298
+    },
+    "SecretsGate": {
+      "input_count": 2298,
+      "output_count": 2298,
+      "probe_recovered": 0,
+      "rejected_count": 0
+    }
+  },
+  "rejected_breakdown": {},
+  "dedup_stats": {
+    "near_duplicates_removed": 98,
+    "surviving_count": 2298
+  },
+  "minhash_threshold": 0.9,
+  "sampler_stats": null,
+  "token_stats": {
+    "total_prompt_tokens": 0,
+    "total_completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "wall_clock_seconds": 88.379,
+  "tool_versions": {
+    "curatorkit": "0.1.28",
+    "python": "3.14.10"
+  },
+  "diversity_stats": null,
+  "diagnostic_stats": null,
+  "diagnostic_files": [],
+  "provenance": {
+    "schema": "lexsi.provenance/1",
+    "library": "curatorkit",
+    "version": "0.1.28",
+    "git_sha": null,
+    "created_at": "2026-11-15T06:03:29Z",
+    "base_model": null,
+    "method": "curate",
+    "inputs": [
+      {
+        "kind": "dataset",
+        "ref": "data/curated/train_in.jsonl",
+        "config": null,
+        "provenance": null
+      }
+    ],
+    "params": {
+      "generator_model": null,
+      "judge_model": null,
+      "grpo_scoring_model": null,
+      "export_formats": [
+        "alpaca",
+        "sharegpt"
+      ],
+      "output_split": {
+        "train": 0.95,
+        "val": 0.05
+      },
+      "output_split_group": null,
+      "output_split_near_dup_threshold": 0.8,
+      "pipeline_config_hash": "e3c51faab18e8a50"
+    }
+  }
+}
