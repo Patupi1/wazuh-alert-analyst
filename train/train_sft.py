@@ -14,11 +14,20 @@ Afterwards (AlignTune CLI):
 """
 import argparse
 import json
+import os
+import sys
 import time
 from pathlib import Path
 
-import torch
-from aligntune.core.backend_factory import create_sft_trainer
+# With the TRL backend, keep Unsloth out of the process entirely. When it is importable,
+# AlignTune imports it and Unsloth monkey-patches TRL's SFTTrainer; older Unsloth builds
+# then reject conversational `messages` datasets ("You must specify a formatting_func").
+# PURE_TRL_MODE is AlignTune's own switch (aligntune/_imports.py). Must be set before import.
+if "--backend" not in sys.argv or sys.argv[sys.argv.index("--backend") + 1] == "trl":
+    os.environ["PURE_TRL_MODE"] = "1"
+
+import torch  # noqa: E402
+from aligntune.core.backend_factory import create_sft_trainer  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--model", default="CohereLabs/tiny-aya-global")
