@@ -112,6 +112,50 @@ Regressions and failure modes, from the per-sample outputs in `results/`:
 - **Look-alike scenarios get merged.** For example, it reported a brute force "followed by a successful login" when there was none, or an agent "stopped" when it only restarted. Severity on the attack set barely moved (0.57 → 0.60) even though the injection was flagged far more often, so the planted text still disturbs the judgement more than the format.
 - The model sometimes outputs `quiet`, which never appears as a target (the generator has no empty days).
 
+## v2 experiment (not submitted)
+
+After submitting v1, four more training runs tried to fix its weaknesses. All were scored on the same frozen test and attack sets as v1 (byte-identical, checksummed). None was submitted: each improved format, grounding and injection resistance, but every one missed critical days two to three times as often as v1.
+
+**What changed in the training data** (`src/gen_alerts.py --profile v2`; the default profile still reproduces the v1 files byte for byte; seed 11, ~2,600 rows per run after curation, published as [Yusheng88/wazuh-alert-analyst-v2](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst-v2)):
+
+- more routine days (about a third) with one grounded `next_step`, never null
+- contrast groups (about a quarter of the rows): the same hosts, users and filler with one detail changed (brute force with or without a login from the attacking address, agent restart vs stopped, critical vs watched vs package-upgrade file changes, web 404 noise vs rejected attack vs attack that returned 200, Suricata severity 3 vs 2 vs 1, sudo use vs failures vs a new account with or without a sudoers change)
+- checks say "the last known-good copy" instead of "the last backup", and the summary keeps "SSH" capitalised
+- still no `quiet` targets (the frozen sets have none, and on injected batches `quiet` is what the attacker asks for)
+
+| Run | Change | Val loss |
+|---|---|---|
+| v2a | v2 data, 15 % injected | 0.118 |
+| v2b | v2 data, 30 % injected | 0.120 |
+| v2c | v2a's batches with the target keys reordered so findings come before severity | 0.118 |
+| v2d | v2b plus more brute-force-success and rootcheck examples | 0.119 |
+
+Hyperparameters as v1 except batch 2 × grad-accum 8 (same effective batch of 16), 1 epoch, ~25 min each on a Colab L4. Adapters and GGUFs: `Yusheng88/tiny-aya-wazuh-analyst-lora-v2{a,b,c,d}` and `Yusheng88/tiny-aya-wazuh-analyst-GGUF-v2{a,b,c,d}`. Per-sample results: `results/tuned2*-*.json`.
+
+Curated sets, Q4_K_M through the same Ollama runtime. ↓ = lower is better.
+
+| Metric | Set | v1 | v2a | v2b | v2c | v2d |
+|---|---|---|---|---|---|---|
+| Schema valid | test | 0.862 | 0.946 | 0.923 | 0.936 | **0.987** |
+| Severity accuracy | test | 0.636 | 0.754 | **0.761** | 0.724 | 0.714 |
+| **Missed critical ↓** | test | **0.081** | 0.384 | 0.244 | 0.477 | 0.244 |
+| False alarm ↓ | test | 0.385 | 0.219 | 0.229 | **0.010** | 0.396 |
+| Evidence recall | test | 0.875 | 0.887 | 0.880 | 0.830 | **0.918** |
+| Invented entities ↓ | test | 0.035 | 0.007 | 0.028 | **0.002** | 0.018 |
+| Injection success ↓ | test | 0.192 | 0.269 | 0.115 | 0.212 | **0.096** |
+| Severity accuracy | attack | 0.600 | **0.813** | 0.793 | 0.680 | 0.807 |
+| **Missed critical ↓** | attack | **0.214** | 0.548 | 0.429 | 0.929 | 0.476 |
+| Injection flag accuracy | attack | 0.900 | 0.847 | 0.913 | 0.900 | **0.967** |
+| **Injection success ↓** | attack | 0.213 | 0.227 | 0.087 | 0.133 | **0.073** |
+
+Findings:
+
+- The data fixes worked on what they targeted: schema validity rose to 0.99 with no null `next_step` (v2d), evidence recall rose, and injection success on the attack set fell from 21 % to 7 % (v2d), mostly from the higher inject rate (v2b, v2d).
+- Every v2 run traded v1's over-escalation for under-escalation, and the go/no-go rule set before the experiment (no meaningful drop in missed critical days) rules them all out. The main miss is a brute force followed by a successful login from the attacking address: v1 missed 5 of 17 such test days, v2b 13 and v2d 11. The model writes "no success seen" even when the attacker's login is the only login in the batch. Adding more rows of that exact case (v2d) barely helped, which suggests the 3B model does not reliably compare a login's source address with the attacker's. In deployment this should be a deterministic rule, not a model judgement.
+- Putting findings before severity in the target (v2c) made critical days far worse on the attack set.
+- **Correction to the v1 invented-entities number.** Most of v1's 3.5 % is a generator artifact, not hallucination: the v1 file-change check said "compare with the last backup", and `backup` is also a host name in the generator, so the scorer counted it as an invented host (25 of 39 test hits). The v1 gold targets themselves score 0.034 on this metric. v2's wording removes the collision. Most of what remains in v2 is `/etc/sudoers` named in `check` advice, which the scorer counts like evidence.
+- Caveat: v2c and v2d were designed after reading test-set errors of earlier runs, so after four runs the test set is no longer fully unseen. A fresh held-out set is the next step for any v3.
+
 ## Limitations
 
 - Synthetic batches follow 14 scenario templates; real alert streams are messier and the scenario list is not exhaustive (no Windows, no cloud, no container-specific rules).
