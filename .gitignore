@@ -12,3 +12,7 @@ results/base-attack.json
 data/frozen_v1_backup/
 data/curated_v2/*/*_in.jsonl
 HANDOFF_v2.md
+HANDOFF_v3.md
+data/holdout/
+data/curated_holdout/
+results/rule_in/
