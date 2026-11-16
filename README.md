@@ -241,6 +241,26 @@ Rows "with the rule" are model plus the deterministic brute-force-login escalati
 
 On the test set v3 at Q8_0 has the best false-alarm rate, severity accuracy, schema validity, invented-entity rate and injection-flag accuracy of any model here, and ties v2d on injection success (0.096). It misses more critical days than v1 Q8 (5 of 86 against 1), and its evidence recall is below v3 Q4's (0.891 against 0.933); with the escalation rule neither Q8 model misses a critical test day. Unlike v1 Q8, its injection numbers improve rather than rise. On the attack set it is the best of every run on missed critical (0.190; 0.071 with the rule) and injection success (0.067, against v2d's 0.073 and v1's 0.213), with schema validity 0.993; invented entities rise slightly (0.009 against 0.003 for v3 Q4). **v3 at Q8_0 is the best-scoring model in this project**; v3 at Q4_K_M is about twice as fast (7.7 s against 14.5 s per batch on the test set, 19 s on the attack set's longer batches). v1 Q8 has not been run on the attack set.
 
+## Fresh held-out set (v3 Q8_0)
+
+The frozen test and attack sets are no longer fully unseen: v2c, v2d and v3 were designed after reading results on them. A fresh held-out set was therefore built before any v3 run (new seeds 2027 and 2028, 300 v1-profile and 150 v2-profile batches, 15 % injected; none of the inputs matches a training, test or attack input) and is used only for final scoring: each model is scored on it once, and only the headline numbers are read, never individual errors. 444 batches pass CuratorKIT (119 critical, 188 attention, 137 routine; 66 injected). The set itself is not published yet, so that it stays unseen until it has been used to choose between v3 and a successor.
+
+v3 at Q8_0, scored on 2026-11-16 (444 curated batches; "+ rule" is the deterministic brute-force-login escalation the deployment uses, applied to the same outputs):
+
+| Held-out (n = 444) | v3 Q8_0 | v3 Q8_0 + rule | frozen test, v3 Q8_0 (for reference) |
+| --- | --- | --- | --- |
+| Severity accuracy | 0.709 | **0.745** | 0.771 |
+| Missed critical (n = 119) | 0.227 | **0.092** | 0.058 |
+| False alarms on routine days (n = 137) | 0.036 | 0.036 | 0.010 |
+| Schema valid | 0.991 | 0.991 | 0.993 |
+| Evidence recall (n = 307) | 0.844 | 0.856 | 0.891 |
+| Invented entities | 0.006 | 0.006 | 0.009 |
+| Injection flag accuracy | 0.982 | 0.982 | 0.993 |
+| Injection success (n = 66 injected) | 0.076 | 0.076 | 0.096 |
+| Latency per batch (RX 6400, mean) | 16.0 s | | 14.5 s |
+
+Every metric except injection success and invented entities is somewhat worse than on the frozen test set, which is what an unseen set should show after three rounds of design against the frozen one. The largest gap is missed critical days without the rule (0.227 against 0.058); with the rule, which is how the model is deployed, it is 0.092. Format and injection resistance carry over. Baselines on the same set (v1 at Q8_0 and Q4_K_M, v2d at Q4_K_M) follow.
+
 ## Limitations
 
 - Synthetic batches follow 14 scenario templates; real alert streams are messier and the scenario list is not exhaustive (no Windows, no cloud, no container-specific rules).
