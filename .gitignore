@@ -16,3 +16,4 @@ HANDOFF_v3.md
 data/holdout/
 data/curated_holdout/
 results/rule_in/
+data/curated_v3/*_in.jsonl

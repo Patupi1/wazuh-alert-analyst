@@ -6,6 +6,7 @@ Needs a write token: `hf auth login` or HF_TOKEN in the environment.
   push_hf.py datasets <user>/<repo>         uploads data/curated/{train,test,attack} as one dataset repo
   push_hf.py results  <user>/<repo>         uploads results/*.json into the dataset repo under results/
   push_hf.py model    <user>/<repo> <dir>   uploads a model/adapter folder
+  push_hf.py datasets-v3 <user>/<repo>      uploads data/curated_v3 (v3 training set only)
   push_hf.py datasets-v2 <user>/<repo>      uploads data/curated_v2/{a,b} (v2 TRAINING sets only; test and
                                             attack stay in the v1 dataset repo, unchanged)
 """
@@ -197,6 +198,44 @@ secrets gate, provenance files in each folder). Lexsi AI Safety and Alignment Ha
 """
 
 
+V3_CARD = """---
+license: cc-by-4.0
+tags: [curatorkit, security, wazuh, synthetic, prompt-injection, lexsi-hackathon]
+task_categories: [text-generation]
+language: [en]
+configs:
+- config_name: train_messages
+  data_files:
+  - split: train
+    path: train/train/messages.jsonl
+  - split: val
+    path: train/val/messages.jsonl
+- config_name: train
+  data_files:
+  - split: train
+    path: train/train/sft_alpaca.jsonl
+  - split: val
+    path: train/val/sft_alpaca.jsonl
+---
+
+# Wazuh alert analyst, v3 training set
+
+Training set only (2,698 train + 142 val rows after CuratorKIT). Everything is synthetic: hosts, users,
+files and addresses are invented (external addresses from the RFC 5737 documentation ranges).
+
+Generated with `src/gen_alerts.py --profile v3 --seed 12 --n 3000 --inject-rate 0.3`. v3 keeps v1's
+scenario mix (30 % no-finding days, no contrast groups) and takes only v2's wording fixes: a grounded,
+never-null `next_step` on routine days, "the last known-good copy" in checks, fixed summary
+capitalisation, and "from the same address" in the brute-force-login item. 30 % of batches are
+injected (v2 run b's rate). Every v2 run under-escalated critical days; v3 tests whether v2's contrast
+groups and extra routine days caused that.
+
+v3 is scored on the frozen v1 test and attack sets ([Yusheng88/wazuh-alert-analyst](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst))
+and on a separate held-out set that is not published yet. No v3 training input matches any of them.
+Not part of the hackathon submission. Code: https://github.com/Patupi1/wazuh-alert-analyst (branch homelab-deploy).
+"""
+
+
 def main():
     api = HfApi()
     cmd, repo = sys.argv[1], sys.argv[2]
@@ -206,6 +245,11 @@ def main():
         api.upload_folder(folder_path=str(ROOT / "data/curated"), repo_id=repo, repo_type="dataset",
                           ignore_patterns=["*_in.jsonl"], commit_message="curated train/test/attack sets")
         print("https://huggingface.co/datasets/" + repo)
+    elif cmd == "datasets-v3":
+        api.create_repo(repo, repo_type="dataset", exist_ok=True)
+        (ROOT / "data/curated_v3/README.md").write_text(V3_CARD)
+        api.upload_folder(folder_path=str(ROOT / "data/curated_v3"), repo_id=repo, repo_type="dataset",
+                          ignore_patterns=["*_in.jsonl"], commit_message="v3 training set")
     elif cmd == "datasets-v2":
         api.create_repo(repo, repo_type="dataset", exist_ok=True)
         (ROOT / "data/curated_v2/README.md").write_text(V2_CARD)

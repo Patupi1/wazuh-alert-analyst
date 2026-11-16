@@ -15,6 +15,9 @@ Usage: gen_alerts.py --n 2000 --seed 1 --out data/synthetic/raw.jsonl [--inject-
 --profile v2 is for new TRAINING data only (the test and attack sets stay frozen at v1):
 more routine days with a grounded next_step, contrast groups that differ in one detail,
 no "last backup" wording in checks ("backup" is also a host name), fixed summary capitalisation.
+--profile v3 is v1's scenario mix (30 % no-finding days, no contrast groups) with only v2's text
+fixes (grounded next_step, known-good wording, capitalisation, "from the same address"). Every v2
+run under-escalated; v3 tests whether the contrast groups and extra routine days caused it.
 """
 import argparse
 import json
@@ -79,7 +82,13 @@ VERDICT_LAST = False   # --verdict-last: write the findings before the severity 
 
 
 def v2():
+    """v2 sampling: more routine days and contrast groups (runs a-d)."""
     return PROFILE in ("v2", "v2d")
+
+
+def text_fixes():
+    """v2's wording fixes, without v2's sampling changes (v2 runs and v3)."""
+    return PROFILE in ("v2", "v2d", "v3")
 
 
 def v2d():
@@ -154,7 +163,7 @@ def sc_ssh_bruteforce(w, success=None):
         al.append(alert(w, "5715", "sshd: authentication success.", 3, host, 1, src_ip=ip, user=u,
                         log=f"sshd[{rng.randint(1000, 9999)}]: Accepted password for {u} from {ip} port {rng.randint(1024, 65000)} ssh2"))
         ents.add(u)
-        how = f" from the same address" if v2d() else ""
+        how = f" from the same address" if (v2d() or PROFILE == "v3") else ""
         lk = look(f"SSH brute force from {ip} against {host} followed by a successful login as {u}{how}",
                   [ip, host, u], None,
                   f"treat {host} as compromised until checked: {rng.choice(CHECKS_SSH).format(ip=ip)}, review {u}'s shell history and authorized_keys, and block {ip}")
@@ -185,13 +194,13 @@ def sc_fim(w, critical=None):
     if critical:
         inn = rng.choice(["a package upgrade or a deliberate user/group change by the admin", "an admin edit; the time should match a known session",
                           None, None])
-        checks = CHECKS_FIM_V2 if v2() else CHECKS_FIM
+        checks = CHECKS_FIM_V2 if text_fixes() else CHECKS_FIM
         chk = checks.get(path, checks["default"]).format(path=path)
         lk = look(f"Critical system file {ev}: {files} on {host}", list(ents), inn, chk)
         return dict(alerts=al, look=[lk], routine=[], sev=3, entities=ents, injection=None)
     inn = rng.choice(["a config change or package update by the admin", "normal maintenance if the time matches an admin session"])
     lk = look(f"Watched config file {ev}: {files} on {host}", list(ents), inn,
-              (CHECKS_FIM_V2 if v2() else CHECKS_FIM)["default"].format(path=path))
+              (CHECKS_FIM_V2 if text_fixes() else CHECKS_FIM)["default"].format(path=path))
     return dict(alerts=al, look=[lk], routine=[], sev=2, entities=ents, injection=None)
 
 
@@ -408,7 +417,7 @@ def summary_text(rng, sev, looks, routine, n_alerts, injection):
                            "An ordinary day of {r}, with no security concerns.",
                            "All {n} alert entries are routine ({r})."]).format(r=", ".join(routine[:3]), n=n_alerts)
     heads = [l["what"] for l in looks]
-    lead = lower_lead(heads[0]) if v2() else heads[0][0].lower() + heads[0][1:]
+    lead = lower_lead(heads[0]) if text_fixes() else heads[0][0].lower() + heads[0][1:]
     more = f" plus {len(heads) - 1} other item{'s' if len(heads) > 2 else ''} to review" if len(heads) > 1 else ""
     if sev == 3:
         s = rng.choice(["Needs action today: {lead}{more}.", "Critical: {lead}{more}.", "Not a routine day: {lead}{more}."])
@@ -419,7 +428,7 @@ def summary_text(rng, sev, looks, routine, n_alerts, injection):
 
 
 def next_step(rng, sev, looks, routine=()):
-    if not looks and v2():
+    if not looks and text_fixes():
         # one consistent, grounded form: v1's model often wrote null here on routine days
         if not routine:
             return "No action needed."
@@ -559,7 +568,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--inject-rate", type=float, default=0.15)
     ap.add_argument("--out", default=str(ROOT / "data/synthetic/raw.jsonl"))
-    ap.add_argument("--profile", choices=["v1", "v2", "v2d"], default="v1",
+    ap.add_argument("--profile", choices=["v1", "v2", "v2d", "v3"], default="v1",
                     help="v1 reproduces the published sets; v2 is for new training data only")
     ap.add_argument("--verdict-last", action="store_true",
                     help="target key order: prompt_injection, needs_a_look, routine, severity, summary, next_step")
