@@ -17,3 +17,4 @@ data/holdout/
 data/curated_holdout/
 results/rule_in/
 data/curated_v3/*_in.jsonl
+SUBMISSION_GUIDELINES.md
