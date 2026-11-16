@@ -132,6 +132,18 @@ configs:
     path: c/train/train/sft_alpaca.jsonl
   - split: val
     path: c/train/val/sft_alpaca.jsonl
+- config_name: d_train_messages
+  data_files:
+  - split: train
+    path: d/train/train/messages.jsonl
+  - split: val
+    path: d/train/val/messages.jsonl
+- config_name: d_train
+  data_files:
+  - split: train
+    path: d/train/train/sft_alpaca.jsonl
+  - split: val
+    path: d/train/val/sft_alpaca.jsonl
 - config_name: a_train
   data_files:
   - split: train
@@ -160,6 +172,10 @@ Generated with `src/gen_alerts.py --profile v2 --seed 11 --n 3000` (v1 used seed
 - `c`: the same batches as `a` (`--verdict-last`), but the target JSON lists `needs_a_look` before
   `severity`, so the model writes its findings before its verdict; added after run a turned out
   to under-call critical days
+- `d`: `b` (30 % injected) plus fixes for its missed critical days, chosen after reading run b's
+  test-set errors: the brute-force contrast group has two success variants (one with the attacker's
+  login as the only login in the batch), the success item says "from the same address", and
+  rootcheck anomalies are drawn twice as often (`--profile v2d`)
 
 What changed against the v1 training set, each aimed at a failure seen in the v1 outputs:
 
@@ -194,7 +210,7 @@ def main():
         api.create_repo(repo, repo_type="dataset", exist_ok=True)
         (ROOT / "data/curated_v2/README.md").write_text(V2_CARD)
         api.upload_folder(folder_path=str(ROOT / "data/curated_v2"), repo_id=repo, repo_type="dataset",
-                          ignore_patterns=["*_in.jsonl"], commit_message="v2 training sets (runs a, b, c)")
+                          ignore_patterns=["*_in.jsonl"], commit_message="v2 training sets (runs a, b, c, d)")
         print("https://huggingface.co/datasets/" + repo)
     elif cmd == "results":
         api.upload_folder(folder_path=str(ROOT / "results"), path_in_repo="results", repo_id=repo, repo_type="dataset",

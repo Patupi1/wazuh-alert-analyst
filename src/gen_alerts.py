@@ -79,7 +79,12 @@ VERDICT_LAST = False   # --verdict-last: write the findings before the severity 
 
 
 def v2():
-    return PROFILE == "v2"
+    return PROFILE in ("v2", "v2d")
+
+
+def v2d():
+    """Run d: v2 plus the fixes for run b's missed critical days (see apply_v2d)."""
+    return PROFILE == "v2d"
 
 
 def rule(rid, desc, level):
@@ -149,7 +154,8 @@ def sc_ssh_bruteforce(w, success=None):
         al.append(alert(w, "5715", "sshd: authentication success.", 3, host, 1, src_ip=ip, user=u,
                         log=f"sshd[{rng.randint(1000, 9999)}]: Accepted password for {u} from {ip} port {rng.randint(1024, 65000)} ssh2"))
         ents.add(u)
-        lk = look(f"SSH brute force from {ip} against {host} followed by a successful login as {u}",
+        how = f" from the same address" if v2d() else ""
+        lk = look(f"SSH brute force from {ip} against {host} followed by a successful login as {u}{how}",
                   [ip, host, u], None,
                   f"treat {host} as compromised until checked: {rng.choice(CHECKS_SSH).format(ip=ip)}, review {u}'s shell history and authorized_keys, and block {ip}")
         return dict(alerts=al, look=[lk], routine=[], sev=3, entities=ents, injection=None)
@@ -531,6 +537,19 @@ def make_contrast_group(rng, idx, inject_rate):
     return out
 
 
+def apply_v2d():
+    """Run d. Run b missed 13 of 17 test days with a brute force that ended in a login from the
+    attacking address; in v2 training data that case almost always came with normal admin logins
+    next to it (46 rows had the attacker's login alone, against 81 in v1). Two success variants per
+    group instead of one, and rootcheck (70 training rows) drawn twice as often."""
+    global LOOK_SCENARIOS
+    CONTRAST_GROUPS["bruteforce_success"]["variants"] = [
+        [(sc_ssh_bruteforce, dict(success=False)), (sc_logins, {})],
+        [(sc_ssh_bruteforce, dict(success=True))],
+        [(sc_ssh_bruteforce, dict(success=True)), (sc_logins, {})]]
+    LOOK_SCENARIOS = [(f, 2 if f is sc_rootcheck else wt) for f, wt in LOOK_SCENARIOS]
+
+
 CONTRAST_P = 0.115   # chance that the next item is a contrast group (2-4 rows) => about a quarter of the rows
 
 
@@ -540,7 +559,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--inject-rate", type=float, default=0.15)
     ap.add_argument("--out", default=str(ROOT / "data/synthetic/raw.jsonl"))
-    ap.add_argument("--profile", choices=["v1", "v2"], default="v1",
+    ap.add_argument("--profile", choices=["v1", "v2", "v2d"], default="v1",
                     help="v1 reproduces the published sets; v2 is for new training data only")
     ap.add_argument("--verdict-last", action="store_true",
                     help="target key order: prompt_injection, needs_a_look, routine, severity, summary, next_step")
@@ -548,6 +567,8 @@ def main():
     global PROFILE, VERDICT_LAST
     PROFILE = a.profile
     VERDICT_LAST = a.verdict_last
+    if v2d():
+        apply_v2d()
     rng = random.Random(a.seed)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     from collections import Counter
