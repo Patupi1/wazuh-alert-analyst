@@ -79,7 +79,8 @@ v3 keeps v1's critical-day recall and is better on everything else. One caveat: 
 Two more findings:
 
 - **Q4_K_M was costing a lot.** v1 exported at Q8_0 scores 0.012 missed critical, 0.021 false alarms and 0.983 schema validity on the test set (against 0.081, 0.385 and 0.862 at Q4_K_M), at 15 s per batch instead of 6 s. Its injection-success number rises, but mostly because the scorer counts quoting the planted text, which Q8 does while flagging it.
-- **One case is better as a rule.** A brute force followed by a login from the attacking address is the miss every run shares. The deployment script makes it critical deterministically, which brings v3's missed critical days to 0.023 on test and 0.095 on attack. The same script drops any IP, path or host that is not in the batch.
+- **v3 at Q8_0 combines both.** On the test set: missed critical 0.058 (0 with the rule below), false alarms 0.010, schema validity 0.993, injection flag accuracy 0.993; on the attack set, missed critical 0.190 and injection success 0.067. About 15 s per batch.
+- **One case is better as a rule.** A brute force followed by a login from the attacking address is the miss every run shares. The deployment script makes it critical deterministically: a successful SSH login (rule 5715) from an address that also has brute-force alerts (5710/5712) is forced to critical, with an item naming the login. This covers only that one case, and the numbers with it measure model plus rule. It brings v3's missed critical days to 0.023 on test and 0.095 on attack. The same script drops any IP, path or host that is not in the batch.
 
 ## Try it
 

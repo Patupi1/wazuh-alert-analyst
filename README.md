@@ -2,7 +2,7 @@
 
 **Claim:** a LoRA fine-tune of Cohere's 3.35B Tiny Aya turns a day of Wazuh security alerts into a grounded, structured triage (severity, what needs a look with evidence copied from the batch, the harmless explanation, one check to run), runs fully on a 4 GB consumer GPU in a homelab, and resists prompt-injection text planted in log fields — measured before and after on held-out and adversarial sets.
 
-> **Update (Nov 15, late):** the recommended model is now **v3** ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3)): v1's scenario mix plus v2's data fixes. It keeps v1's critical-day recall and halves attack-set injection success (0.213 → 0.113). A Q8_0 export also showed that Q4_K_M quantization was costing v1 most of its false-alarm and schema performance. See [v3 (current model)](#v3-current-model) and [Quantization](#quantization-q4_k_m-vs-q8_0). The v1 numbers below are unchanged.
+> **Update (Nov 15, late):** the recommended model is now **v3** ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3)): v1's scenario mix plus v2's data fixes. It keeps v1's critical-day recall and halves attack-set injection success (0.213 → 0.113). A Q8_0 export also showed that Q4_K_M quantization was costing v1 most of its false-alarm and schema performance. v3 at Q8_0 ([GGUF-v3-Q8](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8)) is the best-scoring model overall: 0.010 false alarms and 0.993 schema validity on test, 0.067 injection success on the attack set, at about twice Q4's latency. See [v3 (current model)](#v3-current-model) and [Quantization](#quantization-q4_k_m-vs-q8_0). The v1 numbers below are unchanged.
 
 Lexsi AI Safety and Alignment Hackathon, **Track 1** (Fine-tuning and Data Curation), problem statements **Structured output and extraction** and **Data-scarce domains** (real alert logs are private and unlabelled, so the data is generated with exact ground truth); grounding is measured too (evidence recall, invented entities). Repos used: **CuratorKIT** (curation), **AlignTune** (training), **AuditKIT** (evaluation).
 
@@ -186,7 +186,13 @@ Curated frozen sets, Q4_K_M, same Ollama runtime and scorers. ↓ = lower is bet
 
 v3 matches v1 on critical days (8 of 86 test misses against 7, 9 of 42 attack misses for both), and beats v1 on false alarms, severity, grounding and injection resistance. The hypothesis holds: the contrast groups and extra routine days, not the wording fixes, caused v2's under-escalation. Schema validity (0.892) is below v2d's: 26 of v3's 31 test-set schema failures are still `"next_step": null` (5 more are unparseable). The grounded routine `next_step` in the targets removed this pattern in v2d, which had about a third routine days, but not in v3. A one-line post-processor would cover it; the number is reported as measured.
 
-**Deterministic escalation.** In deployment, a successful SSH login (rule 5715) from an address that is also brute-forcing (5710/5712) is forced to critical, with an item naming the login ([`src/postprocess.py`](src/postprocess.py), offline rescoring with [`scripts/apply_rule.py`](scripts/apply_rule.py)). On the frozen sets the rule fires on exactly the 23 batches with that scenario and on nothing else. With the rule, missed critical is **0.023** (test) and **0.095** (attack) for v3, against 0.023 and 0.119 for v1. The same module also checks evidence: IPs, paths and hosts that are not in the batch are removed from the answer and listed.
+**Deterministic escalation ("with the rule").** One miss is shared by every run: a brute force followed by a successful login from the attacking address, which the model often reports as "no success seen". In deployment this case is decided by code, not by the model ([`src/postprocess.py`](src/postprocess.py), `escalate()`):
+
+- **Trigger:** the batch has a successful SSH login (rule 5715) whose `src_ip` also appears on a brute-force entry (rule 5710 or 5712).
+- **Action:** severity is set to `critical`, and a `needs_a_look` item must name the login. An existing item on that address is rewritten ("… followed by a successful login as <user> from the same address"), or a new item is added after any prompt-injection item.
+- **Scope:** only this case. Web attacks that returned 200, rootcheck findings, critical file changes and Suricata severity 1 are still the model's call.
+
+Rows marked "with the rule" score the model's saved answers after this rule, using [`scripts/apply_rule.py`](scripts/apply_rule.py) and `src/eval.py --from-results` with no new generations. They measure model plus rule, not the model alone. On the frozen sets the rule fires on exactly the 23 batches with that scenario and on nothing else. That precision is partly by construction, because the generator's routine logins always come from the admin's own address; on a real network, an owner who mistypes a password and then logs in from the same address would also trigger it. With the rule, missed critical is **0.023** (test) and **0.095** (attack) for v3, against 0.023 and 0.119 for v1. The same module also checks evidence: IPs, paths and hosts that are not in the batch are removed from the answer and listed.
 
 **Caveat, and the held-out set.** v3 was designed after reading v2's results on the frozen test set, so these numbers are not fully unseen. A fresh held-out set (450 batches, new seeds, 444 after curation, zero input overlap with every other set) has been generated. Its only use is final scoring, and it will be published once it has been used for that.
 
@@ -205,7 +211,31 @@ Every number above is on Q4_K_M. To measure the loss, v1's adapter was merged ag
 | Injection success ↓ (n = 52) | **0.192** | 0.404 |
 | Latency per batch | **6.0 s** | 15.3 s |
 
-Quantization loss is large for this task: Q4_K_M was costing v1 most of its false-alarm and schema performance. The rise in injection success is mostly the scorer: Q8 more often quotes the planted text while flagging it (11 of 52 against 3 for Q4), and `injection_success` counts any echo of the planted phrase. The injection was unflagged in 10 of 52 batches against 7. A v3 Q8_0 export ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8)) is being evaluated. v1 Q8 has not been run on the attack set.
+Quantization loss is large for this task: Q4_K_M was costing v1 most of its false-alarm and schema performance. The rise in injection success is mostly the scorer: Q8 more often quotes the planted text while flagging it (11 of 52 against 3 for Q4), and `injection_success` counts any echo of the planted phrase. The injection was unflagged in 10 of 52 batches against 7. The same export for v3 ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8)):
+
+| v3, curated frozen sets | Set | Q4_K_M | Q8_0 |
+|---|---|---|---|
+| Missed critical ↓ (n = 86) | test | 0.093 | 0.058 |
+| Missed critical with the rule ↓ | test | 0.023 | 0.000 |
+| False alarm ↓ (n = 96) | test | 0.146 | 0.010 |
+| Severity accuracy | test | 0.724 | 0.771 |
+| Schema valid | test | 0.892 | 0.993 |
+| Evidence recall | test | 0.933 | 0.891 |
+| Invented entities ↓ | test | 0.010 | 0.009 |
+| Injection flag accuracy | test | 0.960 | 0.993 |
+| Injection success ↓ (n = 52) | test | 0.135 | 0.096 |
+| Missed critical ↓ (n = 42) | attack | 0.214 | 0.190 |
+| Missed critical with the rule ↓ | attack | 0.095 | 0.071 |
+| Severity accuracy | attack | 0.667 | 0.707 |
+| Schema valid | attack | 0.980 | 0.993 |
+| Injection flag accuracy | attack | 0.967 | 0.967 |
+| **Injection success ↓** | attack | 0.113 | 0.067 |
+| Evidence recall | attack | 0.890 | 0.863 |
+| Latency per batch (RX 6400, mean) | test | 7.7 s | 14.5 s |
+
+Rows "with the rule" are model plus the deterministic brute-force-login escalation (see [v3 (current model)](#v3-current-model)), not the model alone.
+
+On the test set v3 at Q8_0 has the best false-alarm rate, severity accuracy, schema validity, invented-entity rate and injection-flag accuracy of any model here, and ties v2d on injection success (0.096). It misses more critical days than v1 Q8 (5 of 86 against 1), and its evidence recall is below v3 Q4's (0.891 against 0.933); with the escalation rule neither Q8 model misses a critical test day. Unlike v1 Q8, its injection numbers improve rather than rise. On the attack set it is the best of every run on missed critical (0.190; 0.071 with the rule) and injection success (0.067, against v2d's 0.073 and v1's 0.213), with schema validity 0.993; invented entities rise slightly (0.009 against 0.003 for v3 Q4). **v3 at Q8_0 is the best-scoring model in this project**; v3 at Q4_K_M is about twice as fast (7.7 s against 14.5 s per batch on the test set, 19 s on the attack set's longer batches). v1 Q8 has not been run on the attack set.
 
 ## Limitations
 
