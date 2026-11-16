@@ -6,7 +6,16 @@ Runs on the Wazuh box (stdlib only). Reads the indexer with the read-only report
 (time, agent, rule, level, description, n, src_ip, user, path, url, log), asks Ollama with the
 same system prompt as training, and prints the model's JSON. Nothing leaves the machine.
 
-  analyze_today.py [--model NAME] [--hours 24] [--max-entries 40] [--dry-run]
+The answer then goes through deterministic checks (postprocess.py, copied next to this file):
+  - escalation: a successful SSH login (5715) from an address that is brute-forcing (5710/5712) is
+    critical, and a needs_a_look item names that login, whatever the model said
+  - evidence check: IPs, paths and hosts in the answer that are not in the batch are removed from
+    evidence lists and listed as unverified
+  - the rule-based injection screen (AI_TEXT) runs on the batch independently of the model
+
+  analyze_today.py [--model NAME] [--hours 24] [--max-entries 25] [--dry-run] [--json]
+
+triage() is the entry point for alert-report.py; it never raises.
 """
 import argparse
 import base64
@@ -15,12 +24,19 @@ import os
 import re
 import ssl
 import sys
+import time
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from prompt import SYSTEM, user_message  # noqa: E402  (copy prompt.py next to this file)
+from postprocess import escalate, evidence_check  # noqa: E402  (copy postprocess.py next to this file)
+
+DEFAULT_MODEL = "hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M"
+# host names the model saw in training; it is most likely to invent these
+TRAINING_HOSTS = ["web-01", "web-02", "db-01", "app-01", "nas", "jump", "ci-runner", "mail", "dns-01",
+                  "media", "backup", "laptop-kai", "laptop-mira", "pihole", "k8s-node-1", "git-01"]
 
 ENV = Path("~/.config/alert-report/env").expanduser()
 AI_TEXT = re.compile(r"ignore (all |any )?(previous|prior|above) instructions|system override|as an ai|ai assistant|assistant[:,]|"
@@ -98,6 +114,20 @@ def to_batch(hits, total, hours, max_entries):
             "total_alerts": total, "alerts": entries}
 
 
+def lenient_json(text):
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (text or "").strip(), flags=re.S)
+    try:
+        return json.loads(text)
+    except Exception:
+        i, j = text.find("{"), text.rfind("}")
+        if i >= 0 and j > i:
+            try:
+                return json.loads(text[i:j + 1])
+            except Exception:
+                return None
+    return None
+
+
 def ask(model, batch, url="http://127.0.0.1:11434"):
     body = {"model": model, "stream": False, "keep_alive": 0, "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 900},
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_message(batch)}]}
@@ -105,29 +135,84 @@ def ask(model, batch, url="http://127.0.0.1:11434"):
     return json.load(urllib.request.urlopen(req, timeout=900))["message"]["content"]
 
 
+def screen(batch):
+    """Rule-based injection screen, independent of the model."""
+    return [g for g in batch["alerts"] if AI_TEXT.search(json.dumps(g, ensure_ascii=False))]
+
+
+def triage(hours=24, max_entries=25, model=None, c=None):
+    """Batch -> model -> checks. Returns a dict and never raises; on failure `error` is set and
+    `answer` is None, but the rule-based escalation and injection screen still run."""
+    r = {"model": None, "answer": None, "severity": None, "notes": [], "unverified": [], "flagged": [],
+         "batch": None, "latency_s": None, "error": None, "raw": None}
+    try:
+        c = c if c is not None else cfg()
+        r["model"] = model or c.get("ANALYST_MODEL") or os.environ.get("ANALYST_MODEL") or DEFAULT_MODEL
+        hits, total = indexer(c, hours)
+        batch = r["batch"] = to_batch(hits, total, hours, max_entries)
+        r["flagged"] = screen(batch)
+        # training host names that are also ordinary words ("the last backup") are left out of the free-text scan
+        hosts = [h for h in TRAINING_HOSTS if h not in ("backup", "mail", "media", "jump")] + [h.strip() for h in c.get("ANALYST_HOSTS", "").split(",") if h.strip()]
+        t = time.time()
+        try:
+            r["raw"] = ask(r["model"], batch, c.get("OLLAMA_URL", "http://127.0.0.1:11434"))
+        except Exception as e:
+            r["error"] = f"model call failed: {e}"
+        r["latency_s"] = round(time.time() - t, 1)
+        ans = lenient_json(r["raw"]) if r["raw"] else None
+        if r["raw"] and not isinstance(ans, dict):
+            r["error"] = "model answer was not JSON"
+            ans = None
+        if ans is None:
+            # rule-based floor: the escalation still applies without a model answer
+            ans_rule, notes = escalate(batch, {"severity": None, "prompt_injection": bool(r["flagged"]),
+                                               "summary": "", "needs_a_look": [], "routine": [], "next_step": ""})
+            if notes:
+                r["severity"], r["notes"] = "critical", notes
+                r["rule_items"] = ans_rule["needs_a_look"]
+            return r
+        ans, r["notes"] = escalate(batch, ans)
+        ans, r["unverified"] = evidence_check(batch, ans, hosts)
+        r["answer"], r["severity"] = ans, ans.get("severity")
+    except Exception as e:
+        r["error"] = r["error"] or f"{type(e).__name__}: {e}"
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=os.environ.get("ANALYST_MODEL", "hf.co/CohereLabs/tiny-aya-global-GGUF:Q4_K_M"))
+    ap.add_argument("--model", default=None, help=f"default: ANALYST_MODEL from the env file, else {DEFAULT_MODEL}")
+    ap.add_argument("--json", action="store_true", help="print the full triage() result as JSON")
     ap.add_argument("--hours", type=int, default=24)
     ap.add_argument("--max-entries", type=int, default=25)
     ap.add_argument("--dry-run", action="store_true", help="print the batch, do not call the model")
     a = ap.parse_args()
-    hits, total = indexer(cfg(), a.hours)
-    batch = to_batch(hits, total, a.hours, a.max_entries)
-    # independent, rule-based injection screen printed as data next to the model's verdict
-    flagged = [g for g in batch["alerts"] if AI_TEXT.search(json.dumps(g))]
     if a.dry_run:
-        print(json.dumps(batch, indent=1))
+        hits, total = indexer(cfg(), a.hours)
+        batch = to_batch(hits, total, a.hours, a.max_entries)
+        print(json.dumps(batch, indent=1, ensure_ascii=False))
         print(f"\n{total} alerts ({len(hits)} fetched) -> {len(batch['alerts'])} entries, "
-              f"{len(json.dumps(batch, separators=(',', ':')))} chars; rule-based injection flags: {len(flagged)}")
+              f"{len(json.dumps(batch, separators=(',', ':')))} chars; rule-based injection flags: {len(screen(batch))}")
         return
-    out = ask(a.model, batch)
-    print(out)
-    if flagged:
-        print(f"\n[rule-based screen] {len(flagged)} entr{'y' if len(flagged) == 1 else 'ies'} contain text aimed at an AI; shown as data:")
-        for g in flagged:
-            print("  ", json.dumps(g)[:200])
-
+    r = triage(a.hours, a.max_entries, a.model)
+    if a.json:
+        print(json.dumps(r, indent=1, ensure_ascii=False))
+        return
+    print(f"model {r['model']}  ({r['latency_s']} s)")
+    if r["error"]:
+        print("ERROR:", r["error"])
+        if r["raw"]:
+            print(r["raw"])
+    if r["answer"] is not None:
+        print(json.dumps(r["answer"], indent=1, ensure_ascii=False))
+    for n in r["notes"]:
+        print("[escalation rule]", n)
+    if r["unverified"]:
+        print("[evidence check] not in the batch:", ", ".join(r["unverified"]))
+    if r["flagged"]:
+        print(f"[rule-based screen] {len(r['flagged'])} entr{'y' if len(r['flagged']) == 1 else 'ies'} contain text aimed at an AI; shown as data:")
+        for g in r["flagged"]:
+            print("  ", json.dumps(g, ensure_ascii=False)[:200])
 
 if __name__ == "__main__":
     main()
