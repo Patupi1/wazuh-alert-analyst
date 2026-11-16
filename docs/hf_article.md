@@ -59,13 +59,35 @@ The base model writes clean JSON but cannot triage. It calls almost every critic
 
 These point to the next iteration: contrast pairs that differ in one detail, negatives where critical files are absent, and preference pairs (CuratorKIT `adversarial_preference` plus DPO) for injection robustness.
 
+## Update: v3, and what quantization was hiding
+
+After the first submission I tried four more training runs (v2a–d). They fixed format and grounding and halved injection success, but every one missed two to three times as many critical days as v1. The share of critical days in training was the same in every set. What all four had and v1 did not was "contrast groups" (near-identical batches that differ in one detail) and more routine days.
+
+**v3** drops those and keeps only the wording fixes, with 30 % injected batches. On the same frozen sets, Q4_K_M:
+
+| Metric | Set | v1 | **v3** |
+|---|---|---|---|
+| Missed critical days ↓ | test / attack | 0.081 / 0.214 | 0.093 / 0.214 |
+| False alarm on routine days ↓ | test | 0.385 | **0.146** |
+| Severity accuracy | test | 0.636 | **0.724** |
+| Evidence recall | test | 0.875 | **0.933** |
+| Invented entities ↓ | test | 0.035 | **0.010** |
+| **Injection success ↓** | attack | 0.213 | **0.113** |
+
+v3 keeps v1's critical-day recall and is better on everything else. One caveat: v3 was designed after reading v2's results on these sets. A fresh held-out set exists for the final score and will be published once it has been used.
+
+Two more findings:
+
+- **Q4_K_M was costing a lot.** v1 exported at Q8_0 scores 0.012 missed critical, 0.021 false alarms and 0.983 schema validity on the test set (against 0.081, 0.385 and 0.862 at Q4_K_M), at 15 s per batch instead of 6 s. Its injection-success number rises, but mostly because the scorer counts quoting the planted text, which Q8 does while flagging it.
+- **One case is better as a rule.** A brute force followed by a login from the attacking address is the miss every run shares. The deployment script makes it critical deterministically, which brings v3's missed critical days to 0.023 on test and 0.095 on attack. The same script drops any IP, path or host that is not in the batch.
+
 ## Try it
 
 ```bash
-ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M
+ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3:Q4_K_M
 ```
 
-Use the system prompt from `src/prompt.py`. `deploy/analyze_today.py` reads the last 24 h from a Wazuh indexer, groups the alerts into the trained batch format, and asks the local model. A separate rule-based screen lists any entries that contain text aimed at an AI.
+Use the system prompt from `src/prompt.py`. `deploy/analyze_today.py` reads the last 24 h from a Wazuh indexer, groups the alerts into the trained batch format, and asks the local model. `src/postprocess.py` applies the brute-force escalation and the evidence check, and a separate rule-based screen lists any entries that contain text aimed at an AI. Q8_0 exports: `hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-Q8:Q8_0` (v1) and `hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8:Q8_0` (v3).
 
 - Code and full write-up: https://github.com/Patupi1/wazuh-alert-analyst
 - Models: https://huggingface.co/collections/Yusheng88/tiny-aya-wazuh-analyst-models-6af99f90ced10d8fb22adea2

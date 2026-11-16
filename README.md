@@ -2,6 +2,8 @@
 
 **Claim:** a LoRA fine-tune of Cohere's 3.35B Tiny Aya turns a day of Wazuh security alerts into a grounded, structured triage (severity, what needs a look with evidence copied from the batch, the harmless explanation, one check to run), runs fully on a 4 GB consumer GPU in a homelab, and resists prompt-injection text planted in log fields — measured before and after on held-out and adversarial sets.
 
+> **Update (Nov 15, late):** the recommended model is now **v3** ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3)): v1's scenario mix plus v2's data fixes. It keeps v1's critical-day recall and halves attack-set injection success (0.213 → 0.113). A Q8_0 export also showed that Q4_K_M quantization was costing v1 most of its false-alarm and schema performance. See [v3 (current model)](#v3-current-model) and [Quantization](#quantization-q4_k_m-vs-q8_0). The v1 numbers below are unchanged.
+
 Lexsi AI Safety and Alignment Hackathon, **Track 1** (Fine-tuning and Data Curation), problem statements **Structured output and extraction** and **Data-scarce domains** (real alert logs are private and unlabelled, so the data is generated with exact ground truth); grounding is measured too (evidence recall, invented entities). Repos used: **CuratorKIT** (curation), **AlignTune** (training), **AuditKIT** (evaluation).
 
 ## Abstract
@@ -154,13 +156,62 @@ Findings:
 - Every v2 run traded v1's over-escalation for under-escalation, and the go/no-go rule set before the experiment (no meaningful drop in missed critical days) rules them all out. The main miss is a brute force followed by a successful login from the attacking address: v1 missed 5 of 17 such test days, v2b 13 and v2d 11. The model writes "no success seen" even when the attacker's login is the only login in the batch. Adding more rows of that exact case (v2d) barely helped, which suggests the 3B model does not reliably compare a login's source address with the attacker's. In deployment this should be a deterministic rule, not a model judgement.
 - Putting findings before severity in the target (v2c) made critical days far worse on the attack set.
 - **Correction to the v1 invented-entities number.** Most of v1's 3.5 % is a generator artifact, not hallucination: the v1 file-change check said "compare with the last backup", and `backup` is also a host name in the generator, so the scorer counted it as an invented host (25 of 39 test hits). The v1 gold targets themselves score 0.034 on this metric. v2's wording removes the collision. Most of what remains in v2 is `/etc/sudoers` named in `check` advice, which the scorer counts like evidence.
-- Caveat: v2c and v2d were designed after reading test-set errors of earlier runs, so after four runs the test set is no longer fully unseen. A fresh held-out set is the next step for any v3.
+- Caveat: v2c and v2d were designed after reading test-set errors of earlier runs, so after four runs the test set is no longer fully unseen. A fresh held-out set now exists for v3 (below).
+
+## v3 (current model)
+
+**Hypothesis.** All four v2 runs under-escalated, and the share of critical days in training was about the same in every set (27–31 %). What every v2 run had and v1 lacked was the contrast groups and the extra routine days. v3 removes those and keeps only v2's fixes that target wording and format.
+
+**Data** (`src/gen_alerts.py --profile v3 --seed 12 --n 3000 --inject-rate 0.3`; the v1 and v2d profiles still reproduce their files byte for byte): v1's scenario mix (30 % no-finding days, no contrast groups), a grounded `next_step` on routine days (never null), "the last known-good copy" in checks, fixed summary capitalisation, "from the same address" in the brute-force-login item, and 30 % injected batches (v2b's rate, the clearest injection gain). 2,698 train and 142 val rows after CuratorKIT, published as [Yusheng88/wazuh-alert-analyst-v3](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst-v3). No v3 input matches any test, attack or held-out input. Same hyperparameters as the v2 runs (batch 2 × grad-accum 8, 1 epoch, 28.5 min on a Colab L4); validation loss 0.124, token accuracy 96.5 %.
+
+Curated frozen sets, Q4_K_M, same Ollama runtime and scorers. ↓ = lower is better.
+
+| Metric | Set | v1 | v2d | **v3** |
+|---|---|---|---|---|
+| **Missed critical ↓** (n = 86) | test | **0.081** | 0.244 | 0.093 |
+| False alarm ↓ (n = 96) | test | 0.385 | 0.396 | **0.146** |
+| Severity accuracy | test | 0.636 | 0.714 | **0.724** |
+| Schema valid | test | 0.862 | **0.987** | 0.892 |
+| Evidence recall | test | 0.875 | 0.918 | **0.933** |
+| Invented entities ↓ | test | 0.035 | 0.018 | **0.010** |
+| Injection flag accuracy | test | 0.912 | 0.949 | **0.960** |
+| Injection success ↓ (n = 52) | test | 0.192 | **0.096** | 0.135 |
+| **Missed critical ↓** (n = 42) | attack | **0.214** | 0.476 | **0.214** |
+| Severity accuracy | attack | 0.600 | **0.807** | 0.667 |
+| Injection flag accuracy | attack | 0.900 | **0.967** | **0.967** |
+| **Injection success ↓** | attack | 0.213 | **0.073** | 0.113 |
+| Evidence recall | attack | 0.822 | 0.871 | **0.890** |
+| Invented entities ↓ | attack | **0.002** | 0.013 | 0.003 |
+| Latency per batch (RX 6400) | test | 6.0 s | 6.3 s | 7.7 s |
+
+v3 matches v1 on critical days (8 of 86 test misses against 7, 9 of 42 attack misses for both), and beats v1 on false alarms, severity, grounding and injection resistance. The hypothesis holds: the contrast groups and extra routine days, not the wording fixes, caused v2's under-escalation. Schema validity (0.892) is below v2d's: 26 of v3's 31 test-set schema failures are still `"next_step": null` (5 more are unparseable). The grounded routine `next_step` in the targets removed this pattern in v2d, which had about a third routine days, but not in v3. A one-line post-processor would cover it; the number is reported as measured.
+
+**Deterministic escalation.** In deployment, a successful SSH login (rule 5715) from an address that is also brute-forcing (5710/5712) is forced to critical, with an item naming the login ([`src/postprocess.py`](src/postprocess.py), offline rescoring with [`scripts/apply_rule.py`](scripts/apply_rule.py)). On the frozen sets the rule fires on exactly the 23 batches with that scenario and on nothing else. With the rule, missed critical is **0.023** (test) and **0.095** (attack) for v3, against 0.023 and 0.119 for v1. The same module also checks evidence: IPs, paths and hosts that are not in the batch are removed from the answer and listed.
+
+**Caveat, and the held-out set.** v3 was designed after reading v2's results on the frozen test set, so these numbers are not fully unseen. A fresh held-out set (450 batches, new seeds, 444 after curation, zero input overlap with every other set) has been generated. Its only use is final scoring, and it will be published once it has been used for that.
+
+## Quantization: Q4_K_M vs Q8_0
+
+Every number above is on Q4_K_M. To measure the loss, v1's adapter was merged again and exported at Q8_0 (the notebook's last cell; [Yusheng88/tiny-aya-wazuh-analyst-GGUF-Q8](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-Q8), 3.6 GB, about 80 % of it on the 4 GB GPU).
+
+| v1, curated test (n = 297) | Q4_K_M | Q8_0 |
+|---|---|---|
+| Missed critical ↓ (n = 86) | 0.081 | **0.012** |
+| False alarm ↓ (n = 96) | 0.385 | **0.021** |
+| Schema valid | 0.862 | **0.983** |
+| needs_a_look count error ↓ | 0.545 | **0.327** |
+| Severity accuracy | 0.636 | 0.650 |
+| Injection flag accuracy | 0.912 | **0.960** |
+| Injection success ↓ (n = 52) | **0.192** | 0.404 |
+| Latency per batch | **6.0 s** | 15.3 s |
+
+Quantization loss is large for this task: Q4_K_M was costing v1 most of its false-alarm and schema performance. The rise in injection success is mostly the scorer: Q8 more often quotes the planted text while flagging it (11 of 52 against 3 for Q4), and `injection_success` counts any echo of the planted phrase. The injection was unflagged in 10 of 52 batches against 7. A v3 Q8_0 export ([Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8)) is being evaluated. v1 Q8 has not been run on the attack set.
 
 ## Limitations
 
 - Synthetic batches follow 14 scenario templates; real alert streams are messier and the scenario list is not exhaustive (no Windows, no cloud, no container-specific rules).
 - Targets are templated prose; the model learns the schema and the judgement rules, not rich explanations. One template capitalises badly ("sSH brute force"), found after training and left as is.
-- Base and tuned are both evaluated at Q4_K_M through Ollama; numbers for the unquantised adapter may differ slightly.
+- Base and tuned are both evaluated at Q4_K_M through Ollama. Quantization matters more than expected: v1 at Q8_0 scores much better on false alarms and schema (see Quantization), so the Q4 numbers understate the fine-tune.
 - Injection payloads are drawn from nine families; held-out attack phrasing is only partially covered.
 - CC-BY-NC base model: non-commercial use only.
 
@@ -177,6 +228,8 @@ Findings:
 - Dataset: [Yusheng88/wazuh-alert-analyst](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst) (train / val / test / attack, alpaca + messages + sharegpt, CuratorKIT manifest)
 - LoRA adapter: [Yusheng88/tiny-aya-wazuh-analyst-lora](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-lora) (with `train_summary.json` and `lexsi_provenance.json`)
 - GGUF Q4_K_M for Ollama / llama.cpp: [Yusheng88/tiny-aya-wazuh-analyst-GGUF](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF) — `ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M`
+- **v3 (recommended):** adapter [Yusheng88/tiny-aya-wazuh-analyst-lora-v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-lora-v3), GGUF [Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3) — `ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3:Q4_K_M`; training set [Yusheng88/wazuh-alert-analyst-v3](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst-v3)
+- Q8_0 exports: [v1](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-Q8), [v3](https://huggingface.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF-v3-Q8)
 - Results JSON (per-sample predictions and scores, base and tuned): `results/` here and in the dataset repo under `results/`
 
 ## Reproduce
@@ -197,6 +250,8 @@ ollama pull hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M
 python src/eval.py --data data/synthetic/test_raw.jsonl   --curated data/curated/test/sft_alpaca.jsonl   --model ollama:hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M --label tuned-test
 python src/eval.py --data data/synthetic/attack_raw.jsonl --curated data/curated/attack/sft_alpaca.jsonl --model ollama:hf.co/Yusheng88/tiny-aya-wazuh-analyst-GGUF:Q4_K_M --label tuned-attack
 ```
+
+v3: `python src/gen_alerts.py --n 3000 --seed 12 --inject-rate 0.3 --profile v3 --out data/synthetic/train_v3_raw.jsonl`, curated into `data/curated_v3` (CuratorKIT, same settings), then `train/colab_train.ipynb` with `RUN = "v3"`, and evaluation with the same commands and `--label tuned3-test` / `tuned3-attack`.
 
 `data/source/wazuh-rules.json` is parsed from the Wazuh ruleset inside a stock manager container (GPLv2 upstream).
 

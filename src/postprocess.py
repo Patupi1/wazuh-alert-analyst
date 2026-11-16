@@ -1,4 +1,4 @@
-"""Deterministic post-processing of the analyst's answer (stdlib only; copied to sonetto next to
+"""Deterministic post-processing of the analyst's answer (stdlib only; copied to the Wazuh box next to
 analyze_today.py).
 
 escalate(batch, answer)  A successful SSH login (rule 5715) from an address that is also brute-forcing
