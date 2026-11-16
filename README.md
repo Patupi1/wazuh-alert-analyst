@@ -132,7 +132,7 @@ After submitting v1, four more training runs tried to fix its weaknesses. All we
 | v2c | v2a's batches with the target keys reordered so findings come before severity | 0.118 |
 | v2d | v2b plus more brute-force-success and rootcheck examples | 0.119 |
 
-Hyperparameters as v1 except batch 2 × grad-accum 8 (same effective batch of 16), 1 epoch, ~25 min each on a Colab L4. Adapters and GGUFs: `Yusheng88/tiny-aya-wazuh-analyst-lora-v2{a,b,c,d}` and `Yusheng88/tiny-aya-wazuh-analyst-GGUF-v2{a,b,c,d}`. Per-sample results: `results/tuned2*-*.json`.
+Hyperparameters as v1 except batch 2 × grad-accum 8 (same effective batch of 16), 1 epoch, ~25 min each on a Colab A100 (40 GB). Adapters and GGUFs: `Yusheng88/tiny-aya-wazuh-analyst-lora-v2{a,b,c,d}` and `Yusheng88/tiny-aya-wazuh-analyst-GGUF-v2{a,b,c,d}`. Per-sample results: `results/tuned2*-*.json`.
 
 Curated sets, Q4_K_M through the same Ollama runtime. ↓ = lower is better.
 
@@ -162,7 +162,7 @@ Findings:
 
 **Hypothesis.** All four v2 runs under-escalated, and the share of critical days in training was about the same in every set (27–31 %). What every v2 run had and v1 lacked was the contrast groups and the extra routine days. v3 removes those and keeps only v2's fixes that target wording and format.
 
-**Data** (`src/gen_alerts.py --profile v3 --seed 12 --n 3000 --inject-rate 0.3`; the v1 and v2d profiles still reproduce their files byte for byte): v1's scenario mix (30 % no-finding days, no contrast groups), a grounded `next_step` on routine days (never null), "the last known-good copy" in checks, fixed summary capitalisation, "from the same address" in the brute-force-login item, and 30 % injected batches (v2b's rate, the clearest injection gain). 2,698 train and 142 val rows after CuratorKIT, published as [Yusheng88/wazuh-alert-analyst-v3](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst-v3). No v3 input matches any test, attack or held-out input. Same hyperparameters as the v2 runs (batch 2 × grad-accum 8, 1 epoch, 28.5 min on a Colab L4); validation loss 0.124, token accuracy 96.5 %.
+**Data** (`src/gen_alerts.py --profile v3 --seed 12 --n 3000 --inject-rate 0.3`; the v1 and v2d profiles still reproduce their files byte for byte): v1's scenario mix (30 % no-finding days, no contrast groups), a grounded `next_step` on routine days (never null), "the last known-good copy" in checks, fixed summary capitalisation, "from the same address" in the brute-force-login item, and 30 % injected batches (v2b's rate, the clearest injection gain). 2,698 train and 142 val rows after CuratorKIT, published as [Yusheng88/wazuh-alert-analyst-v3](https://huggingface.co/datasets/Yusheng88/wazuh-alert-analyst-v3). No v3 input matches any test, attack or held-out input. Same hyperparameters as the v2 runs (batch 2 × grad-accum 8, 1 epoch, 28.5 min on a Colab A100 40 GB); validation loss 0.124, token accuracy 96.5 %.
 
 Curated frozen sets, Q4_K_M, same Ollama runtime and scorers. ↓ = lower is better.
 
